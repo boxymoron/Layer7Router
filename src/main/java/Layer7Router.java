@@ -3,6 +3,7 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CancellationException;
 
 import org.jboss.logging.Logger;
 import org.xnio.ChannelListener;
@@ -25,6 +26,13 @@ public final class Layer7Router {
 	final static OptionMap options = OptionMap.builder()
 			.set(Options.ALLOW_BLOCKING, false)
 			.set(Options.RECEIVE_BUFFER, 1024*32)
+			.set(Options.SEND_BUFFER, 1024*32)
+			.set(Options.READ_TIMEOUT, 30000)
+			.set(Options.WRITE_TIMEOUT, 30000)
+			.set(Options.MAX_INBOUND_MESSAGE_SIZE, 1024 * 1024 * 1024 * 2)
+			.set(Options.MAX_OUTBOUND_MESSAGE_SIZE, 1024 * 1024 * 1024 * 2)
+			.set(Options.USE_DIRECT_BUFFERS, true)
+			.set(Options.WORKER_IO_THREADS, 4)
 			.getMap();
 	static XnioWorker worker;
 	static XnioWorker worker2;
@@ -133,6 +141,11 @@ public final class Layer7Router {
 					}
 				} catch (IOException e) {
 					e.printStackTrace();
+					try {
+						channel.close();
+					} catch (IOException e1) {
+						e1.printStackTrace();
+					}
 				}
 			}
 		};
@@ -156,6 +169,10 @@ public final class Layer7Router {
 		@Override
 		public void handleEvent(ConduitStreamSourceChannel channel) {
 			try {
+				if(!channel.isOpen()){
+					channel.close();
+					return;
+				}
 				log.info(channel);
 				log.info("channel open? "+channel.isOpen());
 				long res;
@@ -215,8 +232,20 @@ public final class Layer7Router {
 					log.info("End of stream. Closing channel.");
 					channel.close();
 				}
-			} catch (Exception e) {
+			} catch (IOException e) {
 				e.printStackTrace();
+				try {
+					channel.close();
+				} catch (IOException e1) {
+					e1.printStackTrace();
+				}
+				try {
+					if(future != null){
+						future.get().close();
+					}
+				} catch (CancellationException | IOException e1) {
+					e1.printStackTrace();
+				}
 			}
 		}
 	}
@@ -245,8 +274,23 @@ public final class Layer7Router {
 					total += count;
 				}
 				if(res == -1){
-					readListener.future.get().getSourceChannel().close();
-					readListener.future.get().getSinkChannel().close();
+					try{
+						channel.close();
+					}catch(IOException e){
+						e.printStackTrace();
+					}
+					if(readListener.future != null){
+						try{
+							readListener.future.get().getSourceChannel().close();
+						}catch(IOException e){
+							e.printStackTrace();
+						}
+						try{
+							readListener.future.get().getSinkChannel().close();
+						}catch(IOException e){
+							e.printStackTrace();
+						}
+					}
 				}
 				//log.info("Write total of: "+total+" bytes");
 			} catch (IOException e) {
@@ -255,6 +299,13 @@ public final class Layer7Router {
 					channel.close();
 				} catch (IOException e1) {
 					e1.printStackTrace();
+				}
+				if(readListener.future != null){
+					try{
+						readListener.future.get().close();
+					}catch(IOException e1){
+						e.printStackTrace();
+					}
 				}
 			}
 		}
