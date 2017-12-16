@@ -1,7 +1,6 @@
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CancellationException;
 
@@ -41,93 +40,18 @@ public final class Layer7Router {
 
 	}
 
-	@SuppressWarnings("deprecation")
 	public static void main(String[] args) throws Exception { 
 		worker = xnio.createWorker(options);
 		worker2 = xnio.createWorker(options);
-		final Charset charset = Charset.forName("utf-8");
-
-		/*
-        // First define the listener that actually is run on each connection.
-        final ChannelListener<ConnectedStreamChannel> readListener = new ChannelListener<ConnectedStreamChannel>() {
-        	final ByteBuffer buffer = ByteBuffer.allocateDirect(1024*32);
-            public void handleEvent(ConnectedStreamChannel incomingCh) {
-                int res;
-                try {
-                    System.out.println("Incoming from: "+incomingCh.getPeerAddress().toString());
-                    while ((res = incomingCh.read(buffer)) > 0) {
-                    	System.out.println(buffer.toString());
-                        buffer.flip();
-                        String header = StandardCharsets.UTF_8.decode(buffer).toString();
-        				String[] lines = header.split("\n");
-        				for(String line : lines){
-        					System.out.println(line);
-        				}
-        				buffer.rewind();
-
-                    }
-
-                    final IoFuture<ConnectedStreamChannel> futureConnection = worker2.connectStream(new InetSocketAddress("blogs.boxymoron.com", 80), null, OptionMap.EMPTY);
-                    final ConnectedStreamChannel outboundCh = futureConnection.get(); // throws exceptions
-    				Channels.writeBlocking(outboundCh, buffer);
-    				Channels.flushBlocking(outboundCh);
-
-                    ByteBuffer recvBuf = ByteBuffer.allocate(1024*32);
-                    while (Channels.readBlocking(outboundCh, recvBuf) != -1) {
-                        recvBuf.flip();
-                        //final CharBuffer chars = charset.decode(recvBuf);
-                        //System.out.print(chars);
-                        //recvBuf.rewind();
-                        incomingCh.write(recvBuf);
-                    }
-
-                    if (res == -1) {
-                        incomingCh.close();
-                        outboundCh.close();
-                        buffer.clear();
-                        recvBuf.clear();
-                    } else {
-                        incomingCh.resumeReads();
-                        outboundCh.close();
-                    }
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    IoUtils.safeClose(incomingCh);
-                }
-            }
-        };
-
-        // Create an accept listener.
-        final ChannelListener<AcceptingChannel<ConnectedStreamChannel>> acceptListener = new ChannelListener<AcceptingChannel<ConnectedStreamChannel>>() {
-            public void handleEvent(final AcceptingChannel<ConnectedStreamChannel> channel) {
-                try {
-                    ConnectedStreamChannel accepted;
-                    // channel is ready to accept zero or more connections
-                    while ((accepted = channel.accept()) != null) {
-                        System.out.println("accepted " + accepted.getPeerAddress());
-                        // stream channel has been accepted at this stage.
-                        accepted.getReadSetter().set(readListener);
-                        // read listener is set; start it up
-                        accepted.resumeReads();
-                    }
-                } catch (IOException ignored) {
-                }
-            }
-        };*/
-
-		//AcceptingChannel<? extends ConnectedStreamChannel> server = worker.createStreamServer(new InetSocketAddress(8080), acceptListener, OptionMap.EMPTY);
-		// lets start accepting connections
-		//server.resumeAccepts();
 
 		final ChannelListener<AcceptingChannel<StreamConnection>> acceptListener2 = new ChannelListener<AcceptingChannel<StreamConnection>>() {
 			@Override
 			public final void handleEvent(AcceptingChannel<StreamConnection> channel) {
 				try {
 					StreamConnection accepted;
-					// channel is ready to accept zero or more connections
 					while ((accepted = channel.accept()) != null) {
-						System.out.println("accepted " + accepted.getPeerAddress());
-						// stream channel has been accepted at this stage.
+						log.info("Accepted: " + accepted.getPeerAddress());
+
 						final MyReadListener readListener = new MyReadListener();
 						accepted.getSourceChannel().setReadListener(readListener);
 						accepted.getSourceChannel().setCloseListener(readListener);
@@ -153,7 +77,7 @@ public final class Layer7Router {
 		final AcceptingChannel<StreamConnection> server = worker.createStreamConnectionServer(new InetSocketAddress(8080), acceptListener2, OptionMap.EMPTY);
 		server.resumeAccepts();
 
-		System.out.println("Listening on " + server.getLocalAddress());
+		log.info("Listening on " + server.getLocalAddress());
 
 	}
 
@@ -196,7 +120,7 @@ public final class Layer7Router {
 						buffer.get(headersBuffer.array(),0, buffer.remaining());
 						buffer.rewind();
 						headersBuffer.limit(buffer.remaining());
-						System.out.println(new String(headersBuffer.array()));
+						//System.out.println(new String(headersBuffer.array()));
 
 						future = worker2.openStreamConnection(new InetSocketAddress("192.168.1.150", 80), null, options);
 						future.await();
@@ -216,7 +140,7 @@ public final class Layer7Router {
 						buffer.rewind();
 						headersBuffer.limit(buffer.remaining());
 
-						System.out.println(new String(headersBuffer.array()));
+						//System.out.println(new String(headersBuffer.array()));
 
 						total+=buffer.remaining();
 						while((res2 = future.get().getSinkChannel().write(buffer)) > 0l){
