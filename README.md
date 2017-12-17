@@ -22,21 +22,21 @@ How does it work?
 	- Instantiate and Register one Read and one Write ready handler per connection.
 
 - Read Handler (1)
-	- Allocates a 32KB ByteBuffer from the pool
+	- Allocate a 32KB ByteBuffer from the pool
         - This buffer will be used to read from the client and write to the backend
-	- Reads the first X number of packets into the buffer
+	- Read the first X number of packets into the buffer
 		- TODO implement header parsing/analysis/routing decision
 	- Suspend Read notifications on Read handler (1)
 	- Open a connection to backend server
 		- Instantiate and register Read and Write handlers (2)
-			- The Read Handler (2) will call resume on the Read Handler (1) when the backend connection is ready for writes
-			- The Write Handler (2) will call resume on the Write Handler (2) when the backend connection is ready for reads
+			- The Read Handler (2) calls resume on the Read Handler (1) when the backend connection is ready for writes
+			- The Write Handler (2) calls resume on the Write Handler (1) when the backend connection is ready for reads
 	- When backend socket is ready, the Read Handler is called again
 	- Write the headers to the backend (first call)
 	- Write the body (or rest of headers) (subsequent calls)
 
 - Write Handler (1)
-	- Allocates a 32KB ByteBuffer from the pool
+	- Allocate a 32KB ByteBuffer from the pool
         - This buffer will be used to read from the backend and write to the client
     - When the Read Handler (2) is ready it will resume writes on Write Handler (1)
     - Write from backend to client using the buffer
