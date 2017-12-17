@@ -4,7 +4,7 @@ Ok, so it's not a Layer 7 (HTTP) router yet.
 
 So then what is it?
 
-In it's current state it's a full duplex TCP proxy based on NIO/XNIO that can parse the first X number of packets (where X can be up to 32K) from a TCP/HTTP connection. 
+In it's current state it's a full duplex TCP proxy based on NIO/XNIO that can parse the first X number of packets (up to 32KB of data) from a TCP/HTTP connection. 
 Hopefully 32K worth of HTTP headers should be enough to route the request to the appropriate backend server.
 
 <pre>
