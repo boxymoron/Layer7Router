@@ -97,7 +97,7 @@
 									implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
 								<transformer
 									implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-									<mainClass>EchoServer</mainClass>
+									<mainClass>Layer7Router</mainClass>
 								</transformer>
 								<!-- <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer"> 
 									<resource>webapp/</resource> <file>README.txt</file> </transformer> -->
