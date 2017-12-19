@@ -1,17 +1,22 @@
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.apache.log4j.MDC;
 import org.jboss.logging.Logger;
+import org.kohsuke.args4j.CmdLineParser;
+import org.kohsuke.args4j.Option;
+import org.xnio.Buffers;
 import org.xnio.ByteBufferSlicePool;
 import org.xnio.ChannelListener;
 import org.xnio.IoFuture;
 import org.xnio.OptionMap;
-import org.xnio.Options;
+
 import org.xnio.Pooled;
 import org.xnio.StreamConnection;
 import org.xnio.Xnio;
@@ -20,21 +25,21 @@ import org.xnio.channels.AcceptingChannel;
 import org.xnio.conduits.ConduitStreamSinkChannel;
 import org.xnio.conduits.ConduitStreamSourceChannel;
 
+@SuppressWarnings("deprecation")
 public final class Layer7Router {
 
 	final static Logger log = Logger.getLogger(Layer7Router.class);
 
 	final static Xnio xnio = Xnio.getInstance();
-	final static OptionMap options = OptionMap.builder()
-			.set(Options.ALLOW_BLOCKING, false)
-			.set(Options.RECEIVE_BUFFER, 1024*32)
-			.set(Options.SEND_BUFFER, 1024*32)
-			.set(Options.READ_TIMEOUT, 30000)
-			.set(Options.WRITE_TIMEOUT, 30000)
-			.set(Options.MAX_INBOUND_MESSAGE_SIZE, 1024 * 1024 * 1024 * 2)
-			.set(Options.MAX_OUTBOUND_MESSAGE_SIZE, 1024 * 1024 * 1024 * 2)
-			.set(Options.USE_DIRECT_BUFFERS, true)
-			.set(Options.WORKER_IO_THREADS, 2)
+	final static OptionMap xnioOptions = OptionMap.builder()
+			.set(org.xnio.Options.ALLOW_BLOCKING, false)
+			.set(org.xnio.Options.RECEIVE_BUFFER, 1024*32)
+			.set(org.xnio.Options.SEND_BUFFER, 1024*32)
+			.set(org.xnio.Options.READ_TIMEOUT, 30000)
+			.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
+			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
+			.set(org.xnio.Options.WORKER_IO_THREADS, 4)
+			.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, true)
 			.getMap();
 	static XnioWorker worker;
 	
@@ -44,10 +49,16 @@ public final class Layer7Router {
 	final static AtomicLong clientToBackendBytes = new AtomicLong();
 	final static AtomicLong backendToClientBytes = new AtomicLong();
 
-	static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*32, 1024*32*1024);//allocate 1024 buffers of 32KB each, for 32MB worth of buffers
+	static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*32, 32*1024*1024*32);//allocate 32K buffers of 32KB each
+	
+	public static Options routerOptions = new Options();
 
 	public static void main(String[] args) throws Exception {
-		worker = xnio.createWorker(options);
+		final CmdLineParser cmdLineParser = new CmdLineParser(routerOptions);
+		cmdLineParser.parseArgument(args);
+		System.out.println(routerOptions.toString());
+		
+		worker = xnio.createWorker(xnioOptions);
 
 		final ChannelListener<AcceptingChannel<StreamConnection>> acceptListener2 = new ChannelListener<AcceptingChannel<StreamConnection>>() {
 			@Override
@@ -84,7 +95,7 @@ public final class Layer7Router {
 			}
 		};
 
-		final AcceptingChannel<StreamConnection> server = worker.createStreamConnectionServer(new InetSocketAddress(8080), acceptListener2, OptionMap.EMPTY);
+		final AcceptingChannel<StreamConnection> server = worker.createStreamConnectionServer(new InetSocketAddress(routerOptions.router_port), acceptListener2, OptionMap.EMPTY);
 		server.resumeAccepts();
 
 		if(log.isInfoEnabled())log.info("Listening on " + server.getLocalAddress());
@@ -124,96 +135,123 @@ public final class Layer7Router {
 		private StreamConnection streamConnection;
 		private WriteListener writeListener;
 		private ReadListener(){}
+		private long totalReads=0;
+		private long totalWrites=0;
 		
 		@Override
-		public final void handleEvent(final ConduitStreamSourceChannel channel) {
-			if(!streamConnection.isOpen()|| !channel.isOpen()){	
+		public final void handleEvent(final ConduitStreamSourceChannel frontendChannel) {
+			if(log.isInfoEnabled())MDC.put("channel", streamConnection.hashCode());
+			if(!streamConnection.isOpen()|| !frontendChannel.isOpen()){
+				if(log.isInfoEnabled())log.info("Frontend channel is closed.");
 				closeAll();
 				return;
 			}
 			try {
-				int totalRead=0;
-				int totalWritten=0;
-
 				final ByteBuffer buffer = pooledBuffer.getResource();
 				
+				if(future != null){
+					if(log.isInfoEnabled())log.info("Suspending writes on backend (sink)");
+					future.get().getSinkChannel().suspendWrites();
+				}
 				if(!initHeaders && writeHeaders){
-					totalWritten = writeHeaders(buffer);
+					//writeHeaders(buffer);
+					ByteBuffer okBuff = ByteBuffer.allocate("HTTP/1.1 200 OK\r\nProxy-agent: Netscape-Proxy/1.1\r\n\r\n".getBytes().length);
+					okBuff.put("HTTP/1.1 200 OK\r\nProxy-agent: Netscape-Proxy/1.1\r\n\r\n".getBytes());
+					okBuff.flip();
+					streamConnection.getSinkChannel().write(okBuff);
+					boolean flushed = streamConnection.getSinkChannel().flush();
+					log.info("Wrote HTTP/1.1 200 OK to frontent (sink)");
+					writeHeaders= false;
+					buffer.clear();
+					streamConnection.getSourceChannel().wakeupReads();
+					streamConnection.getSinkChannel().wakeupWrites();
+					return;
+					//writeHeaders(buffer);
+					
 				}
 
 				long clientReadBytes=0;
-				while ((clientReadBytes = channel.read(buffer)) > 0) {
-					totalRead+=clientReadBytes;
+				while ((clientReadBytes = frontendChannel.read(buffer)) > 0) {
 					buffer.flip();
-					if(log.isInfoEnabled())log.info(streamConnection.toString()+" "+buffer.toString());
+					if(log.isInfoEnabled())log.info(buffer.toString());
 					if(initHeaders){
-						initHeaders(channel, buffer);
+						if(log.isInfoEnabled())log.info("Suspending reads on frontend (source)");
+						frontendChannel.suspendReads();
+						initHeaders(frontendChannel, buffer);
 						return;
 					}else{
-						totalWritten = writeBody(buffer);
+						writeBody(buffer);
 					}
 				}
 
 				if(clientReadBytes == -1){
-					if(log.isInfoEnabled())log.info(streamConnection.toString()+" End of stream. Closing channel: "+channel);
+					if(log.isInfoEnabled())log.info("Client End of stream.");
 					closeAll();
 				}
-				if(log.isInfoEnabled())log.info(streamConnection.toString()+"Suspending reads on channel: "+channel);
-				channel.suspendReads();
+
 			} catch (IOException e) {
 				e.printStackTrace();
 				closeAll();
+			} finally {
+				if(log.isInfoEnabled())MDC.remove("channel");
 			}
 		}
 
-		private void initHeaders(final ConduitStreamSourceChannel channel, final ByteBuffer buffer) {
-			if(log.isInfoEnabled())log.info(streamConnection.toString()+" Read "+buffer.limit()+" header bytes");
-			if(log.isInfoEnabled())log.info(streamConnection.toString()+" Suspending writes on channel: "+streamConnection.getSinkChannel());
+		private void initHeaders(final ConduitStreamSourceChannel frontendChannel, final ByteBuffer buffer) {
+			if(log.isInfoEnabled())log.info("Read "+buffer.limit()+" header bytes");
+			if(log.isInfoEnabled())log.info("Suspending writes on frontend (sink)");
 			streamConnection.getSinkChannel().suspendWrites();//start out suspended, as soon as the backend source channel is ready, we will get resumed
-			if(log.isInfoEnabled())log.info(streamConnection.toString()+" Reading headers...");
-			String[] lines = StandardCharsets.UTF_8.decode(buffer).toString().split("\r\n");
+			if(log.isInfoEnabled())log.info("Reading (HTTP) headers...");
+			String header = StandardCharsets.UTF_8.decode(buffer).toString();
+			String[] lines = header.toString().split("\r\n");
 			//if(log.isInfoEnabled())log.info(lines[0]);
 			for(String line: lines){
-				//System.out.println(line);
+				System.out.println(line);
 			}
+			String[] proxyLine = lines[0].split(" ");
+			String host = proxyLine[1].substring(0, proxyLine[1].indexOf(":"));
+			String port = proxyLine[1].substring(proxyLine[1].indexOf(':')+1, proxyLine[1].length());
+
 			buffer.rewind();
 			
-			if(log.isInfoEnabled())log.info(streamConnection.toString()+" Suspending reads on channel: "+channel);
-			channel.suspendReads();
-			future = worker.openStreamConnection(new InetSocketAddress("192.168.1.133", 8983), backendChannel -> {
-					if(log.isInfoEnabled())log.info(streamConnection.toString()+" Resuming reads on channel: "+channel);
-					channel.wakeupReads();
+			if(log.isInfoEnabled())log.info("Opening TCP connection to backend: "+host+":"+port);
+			future = worker.openStreamConnection(new InetSocketAddress(host, Integer.parseInt(port)), backendChannel -> {
+					if(log.isInfoEnabled())log.info("Resuming reads on frontend (source)");
+					frontendChannel.wakeupReads();
 					backendChannel.setCloseListener(backendChannel2 -> {
+						if(log.isInfoEnabled())log.info("Backend channel closed.");
+						streamConnection.getSinkChannel().resumeWrites();//resume writes to client
 						closeAll();
-						streamConnection.getSinkChannel().resumeWrites();
 					});
 					backendChannel.getSourceChannel().getReadSetter().set(channel2 ->{
-						//if(log.isInfoEnabled())log.info(streamConnection.toString()+"Resuming writes on channel: "+streamConnection.getSinkChannel());//TODO why is this called multiple times un succession
+						//if(log.isInfoEnabled())log.info("Resuming writes on frontend (sink)");//TODO why is this called multiple times un succession
 						streamConnection.getSinkChannel().resumeWrites();//resume writes to client
 					});
 					backendChannel.getSinkChannel().getWriteSetter().set(channel2 ->{
-						//if(log.isInfoEnabled())log.info(streamConnection.toString()+"Resuming reads on channel: "+channel);
-						channel.resumeReads();
+						//if(log.isInfoEnabled())log.info("Resuming reads on frontend (source)");//TODO why is this called multiple times un succession
+						frontendChannel.resumeReads();
 					});
 					backendChannel.getSourceChannel().resumeReads();
 					backendChannel.getSinkChannel().resumeWrites();
-			}, options);
+					
+			}, xnioOptions);
 			this.initHeaders=false;
-			this.writeHeaders = true;
+			this.writeHeaders=true;
 		}
 
 		private int writeHeaders(final ByteBuffer buffer) throws IOException {
 			int totalWritten=0;
 			int backendWriteBytes=0;
-			if(log.isInfoEnabled())log.info(streamConnection.toString()+" "+buffer.toString());
-			//System.out.println(Buffers.createDumper(buffer, 1, 4).toString());
+			if(log.isInfoEnabled())log.info(buffer.toString());
+			System.out.println(Buffers.createDumper(buffer, 1, 4).toString());
 			final ConduitStreamSinkChannel sink = future.get().getSinkChannel();
 			while((backendWriteBytes = sink.write(buffer)) > 0l){//write to backend
-				sink.flush();
-				if(log.isInfoEnabled())if(log.isInfoEnabled())log.info(streamConnection.toString()+" Wrote "+backendWriteBytes+" header bytes to backend");
+				boolean flushed = sink.flush();
+				if(log.isInfoEnabled())if(log.isInfoEnabled())log.info("Wrote "+backendWriteBytes+" header bytes to backend (flushed: "+flushed+")");
 				totalWritten += backendWriteBytes;
 			}
 			clientToBackendBytes.addAndGet(totalWritten);
+			totalReads += totalWritten;
 			buffer.clear();
 			this.writeHeaders=false;
 			return totalWritten;
@@ -226,10 +264,11 @@ public final class Layer7Router {
 			int backendWriteBytes=0;
 			while((backendWriteBytes = sink.write(buffer)) > 0l){
 				boolean flushed = sink.flush();
-				if(log.isInfoEnabled())log.info(streamConnection.toString()+" Wrote "+backendWriteBytes+" non-header bytes to backend (flushed: "+flushed+")");
+				if(log.isInfoEnabled())log.info("Wrote "+backendWriteBytes+" non-header bytes to backend (flushed: "+flushed+")");
 				totalWritten += backendWriteBytes;
 			}
 			clientToBackendBytes.addAndGet(totalWritten);
+			totalReads += totalWritten;
 			buffer.clear();
 			return totalWritten;
 		}
@@ -242,7 +281,7 @@ public final class Layer7Router {
 			listenersCount.decrementAndGet();
 			writersCount.decrementAndGet();
 			pooledBuffer.getResource().clear();
-			if(log.isInfoEnabled())log.info(streamConnection.toString()+" Closing all resources.");
+			if(log.isInfoEnabled())log.info("Closing all resources.");
 			try{
 				streamConnection.close();
 			}catch(IOException e1){
@@ -258,6 +297,7 @@ public final class Layer7Router {
 				pooledBuffer.free();
 				writeListener.pooledBuffer.free();
 			}
+			if(log.isInfoEnabled())log.info(String.format("TCP Session stats: %,d total reads, %,d total writes", totalReads, totalWrites));
 		}
 	}
 
@@ -274,29 +314,37 @@ public final class Layer7Router {
 			if(readListener.initHeaders || readListener.writeHeaders || readListener.allClosed){
 				return;
 			}
+			if(log.isInfoEnabled())MDC.put("channel", readListener.streamConnection.hashCode());
 			if(!readListener.streamConnection.isOpen() || !channel.isOpen()){
+				if(log.isInfoEnabled())log.info("Frontend channel is closed.");
 				readListener.closeAll();
 				return;
 			}
 			try {
 				if(!readListener.future.get().getSourceChannel().isOpen()){
+					if(log.isInfoEnabled())log.info("Backend channel is closed.");
 					readListener.closeAll();
 					return;
 				}
 				int res=0;
-				int total=0;
+
 				final ByteBuffer buffer = pooledBuffer.getResource();
 				buffer.clear();
 
 				while((res = readListener.future.get().getSourceChannel().read(buffer)) > 0){
 					buffer.flip();
 					long count = channel.write(buffer);
-					channel.flush();
-					total += count;
+					boolean flushed = channel.flush();
+					if(log.isInfoEnabled())log.info("Wrote "+res+" bytes from backend to client (flushed: "+flushed+")");
+					readListener.totalWrites += count;
+					backendToClientBytes.addAndGet(count);
+					if(count != res){
+						throw new RuntimeException("count != res -> "+count+" "+res);
+					}
 				}
-				backendToClientBytes.addAndGet(total);
-				if(log.isInfoEnabled())log.info(readListener.streamConnection.toString()+" Write from backend to client total of: "+total+" bytes");
+
 				if(res == -1){
+					if(log.isInfoEnabled())log.info("Backend End of stream.");
 					readListener.closeAll();
 					return;
 				}
@@ -304,8 +352,31 @@ public final class Layer7Router {
 				e.printStackTrace();
 				readListener.closeAll();
 				return;
+			}finally{
+				if(log.isInfoEnabled())log.info("Suspending writes on front-end (sink)");
+				if(log.isInfoEnabled())MDC.remove("channel");;
+				channel.suspendWrites();
 			}
-			channel.suspendWrites();
+			
+		}
+	}
+	
+	public static class Options {
+		@Option(name = "-router_port", usage="port")
+		public Integer router_port = 7080;
+		
+		@Option(name = "-backend_host", usage="host")
+		public String backend_host = "192.168.1.133";
+		
+		@Option(name = "-backend_port", usage="port")
+		public Integer backend_port = 8983;
+
+		@Override
+		public String toString() {
+			StringBuilder builder = new StringBuilder();
+			builder.append("Options: router_port=").append(router_port).append(", backend_host=").append(backend_host)
+					.append(", backend_port=").append(backend_port).append("");
+			return builder.toString();
 		}
 	}
 
