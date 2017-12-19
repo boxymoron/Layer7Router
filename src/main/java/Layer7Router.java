@@ -381,7 +381,7 @@ public final class Layer7Router {
 					readListener.totalWrites += count;
 					backendToClientBytes.addAndGet(count);
 					if(count != res){
-						throw new RuntimeException("count != res -> "+count+" "+res);
+						System.out.println("count != res -> "+count+" "+res);
 					}
 				}
 
