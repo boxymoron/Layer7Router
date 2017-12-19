@@ -1,7 +1,6 @@
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -11,7 +10,6 @@ import org.apache.log4j.MDC;
 import org.jboss.logging.Logger;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
-import org.xnio.Buffers;
 import org.xnio.ByteBufferSlicePool;
 import org.xnio.ChannelListener;
 import org.xnio.IoFuture;
@@ -137,6 +135,7 @@ public final class Layer7Router {
 		private ReadListener(){}
 		private long totalReads=0;
 		private long totalWrites=0;
+		private boolean isProxy=false;
 		
 		@Override
 		public final void handleEvent(final ConduitStreamSourceChannel frontendChannel) {
@@ -154,20 +153,21 @@ public final class Layer7Router {
 					future.get().getSinkChannel().suspendWrites();
 				}
 				if(!initHeaders && writeHeaders){
-					//writeHeaders(buffer);
-					ByteBuffer okBuff = ByteBuffer.allocate("HTTP/1.1 200 OK\r\nProxy-agent: Netscape-Proxy/1.1\r\n\r\n".getBytes().length);
-					okBuff.put("HTTP/1.1 200 OK\r\nProxy-agent: Netscape-Proxy/1.1\r\n\r\n".getBytes());
-					okBuff.flip();
-					streamConnection.getSinkChannel().write(okBuff);
-					boolean flushed = streamConnection.getSinkChannel().flush();
-					log.info("Wrote HTTP/1.1 200 OK to frontent (sink)");
-					writeHeaders= false;
-					buffer.clear();
-					streamConnection.getSourceChannel().wakeupReads();
-					streamConnection.getSinkChannel().wakeupWrites();
-					return;
-					//writeHeaders(buffer);
-					
+					if(isProxy){
+						ByteBuffer okBuff = ByteBuffer.allocate("HTTP/1.1 200 OK\r\nProxy-agent: Netscape-Proxy/1.1\r\n\r\n".getBytes().length);
+						okBuff.put("HTTP/1.1 200 OK\r\nProxy-agent: Netscape-Proxy/1.1\r\n\r\n".getBytes());
+						okBuff.flip();
+						streamConnection.getSinkChannel().write(okBuff);
+						boolean flushed = streamConnection.getSinkChannel().flush();
+						log.info("Wrote HTTP/1.1 200 OK to frontent (sink) (flushed: "+flushed+")");
+						writeHeaders= false;
+						buffer.clear();
+						streamConnection.getSourceChannel().wakeupReads();
+						streamConnection.getSinkChannel().wakeupWrites();
+						return;
+					}else{
+						writeHeaders(buffer);
+					}
 				}
 
 				long clientReadBytes=0;
@@ -205,17 +205,58 @@ public final class Layer7Router {
 			String header = StandardCharsets.UTF_8.decode(buffer).toString();
 			String[] lines = header.toString().split("\r\n");
 			//if(log.isInfoEnabled())log.info(lines[0]);
-			for(String line: lines){
-				System.out.println(line);
+			//for(String line: lines){
+			//	System.out.println(line);
+			//}
+			
+			String host="";
+			int port = -1;
+			final String[] parts = lines[0].split(" ");
+			if(parts.length == 3){
+				if("CONNECT".equals(parts[0])){//Http Proxy Request
+					host = parts[1].substring(0, parts[1].indexOf(":"));
+					port = Integer.parseInt(parts[1].substring(parts[1].indexOf(':')+1, parts[1].length()));
+					isProxy=true;
+				}else if("HTTP/1.1".equals(parts[2]) || "HTTP/1.0".equals(parts[2])){
+					String hostLine = lines[1];
+					for(int i=0;i<lines.length;i++){
+						if(lines[i].startsWith("Host:")){
+							hostLine = lines[i];
+							break;
+						}
+					}
+					final String[] hostLineParts = hostLine.split(" ");
+					if(hostLineParts.length == 2){
+						if(hostLineParts[1].indexOf(":") > 0){
+							String[] hostPort = hostLineParts[1].split(":");
+							host = hostPort[0];
+							port = Integer.parseInt(hostPort[1]);
+						}else{
+							host = hostLineParts[1];
+							port = 80;
+						}
+					}else{
+						log.warn("Unknown Protocol: "+lines[0]);
+						this.closeAll();
+						return;
+					}
+				}
+			}else{
+				log.warn("Unknown Protocol: "+lines[0]);
+				this.closeAll();
+				return;
 			}
-			String[] proxyLine = lines[0].split(" ");
-			String host = proxyLine[1].substring(0, proxyLine[1].indexOf(":"));
-			String port = proxyLine[1].substring(proxyLine[1].indexOf(':')+1, proxyLine[1].length());
+			
+			if("127.0.0.1".equals(host) || "localhost".equals(host)){
+				host = routerOptions.backend_host;
+				port = routerOptions.backend_port;
+			}
 
 			buffer.rewind();
 			
 			if(log.isInfoEnabled())log.info("Opening TCP connection to backend: "+host+":"+port);
-			future = worker.openStreamConnection(new InetSocketAddress(host, Integer.parseInt(port)), backendChannel -> {
+			final InetSocketAddress addr = new InetSocketAddress(host, port);
+			future = worker.openStreamConnection(addr, backendChannel -> {
 					if(log.isInfoEnabled())log.info("Resuming reads on frontend (source)");
 					frontendChannel.wakeupReads();
 					backendChannel.setCloseListener(backendChannel2 -> {
@@ -224,11 +265,11 @@ public final class Layer7Router {
 						closeAll();
 					});
 					backendChannel.getSourceChannel().getReadSetter().set(channel2 ->{
-						//if(log.isInfoEnabled())log.info("Resuming writes on frontend (sink)");//TODO why is this called multiple times un succession
+						//if(log.isInfoEnabled())log.info("Resuming writes on frontend (sink)");//TODO why is this called multiple times in succession
 						streamConnection.getSinkChannel().resumeWrites();//resume writes to client
 					});
 					backendChannel.getSinkChannel().getWriteSetter().set(channel2 ->{
-						//if(log.isInfoEnabled())log.info("Resuming reads on frontend (source)");//TODO why is this called multiple times un succession
+						//if(log.isInfoEnabled())log.info("Resuming reads on frontend (source)");//TODO why is this called multiple times in succession
 						frontendChannel.resumeReads();
 					});
 					backendChannel.getSourceChannel().resumeReads();
@@ -243,7 +284,7 @@ public final class Layer7Router {
 			int totalWritten=0;
 			int backendWriteBytes=0;
 			if(log.isInfoEnabled())log.info(buffer.toString());
-			System.out.println(Buffers.createDumper(buffer, 1, 4).toString());
+			//System.out.println(Buffers.createDumper(buffer, 1, 4).toString());
 			final ConduitStreamSinkChannel sink = future.get().getSinkChannel();
 			while((backendWriteBytes = sink.write(buffer)) > 0l){//write to backend
 				boolean flushed = sink.flush();
