@@ -365,7 +365,7 @@ public final class Layer7Router {
 			}
 			
 			
-			if("127.0.0.1".equals(host) || "localhost".equals(host) || "192.168.1.133".equals(host) || "192.168.1.150".equals(host)){
+			if("127.0.0.1".equals(host) || "localhost".equals(host) || "192.168.1.133".equals(host) || "192.168.1.150".equals(host) || "192.168.1.218".equals(host)){
 				host = routerOptions.backend_host;
 				port = routerOptions.backend_port;
 			}
@@ -528,14 +528,20 @@ public final class Layer7Router {
 					while((res = readListener.future.get().getSourceChannel().read(buffer)) > 0){
 						buffer.flip();
 						try{
-							long count = channel.write(buffer);
-							boolean flushed = channel.flush();
 							if(isDebug)log.debug("Read "+res+" bytes from frontend (sink)");
-							if(isDebug)log.debug("Wrote "+count+" bytes from backend to client (flushed: "+flushed+")");
-							readListener.totalWrites += count;
-							backendToClientBytes.addAndGet(count);
-							if(count != res){
-								System.out.println("count != res -> "+count+" "+res);
+							long totalCount = 0;
+							long count = 0;
+							while(totalCount != res){
+								count = channel.write(buffer);
+								totalCount+= count;
+								boolean flushed = channel.flush();
+								if(isDebug)log.debug("Wrote "+count+" bytes from backend to client (flushed: "+flushed+")");
+								readListener.totalWrites += count;
+								backendToClientBytes.addAndGet(count);
+								
+							}
+							if(totalCount != res){
+								throw new RuntimeException("totalCount != res -> "+count+" "+res);
 							}
 						}catch(IOException e){
 							log.error("Error writing to Frontend (sink) "+((InetSocketAddress)readListener.streamConnection.getPeerAddress()).toString(),e);
@@ -545,6 +551,8 @@ public final class Layer7Router {
 					}
 					if(res == -1){
 						if(isDebug)log.debug("Backend End of stream.");
+						channel.shutdownWrites();
+						channel.flush();
 						readListener.closeAll();
 						return;
 					}else{
