@@ -528,20 +528,15 @@ public final class Layer7Router {
 					while((res = readListener.future.get().getSourceChannel().read(buffer)) > 0){
 						buffer.flip();
 						try{
+							long count = channel.write(buffer);
+							boolean flushed = channel.flush();
 							if(isDebug)log.debug("Read "+res+" bytes from frontend (sink)");
-							long totalCount = 0;
-							long count = 0;
-							while(totalCount != res){
-								count = channel.write(buffer);
-								totalCount+= count;
-								boolean flushed = channel.flush();
-								if(isDebug)log.debug("Wrote "+count+" bytes from backend to client (flushed: "+flushed+")");
-								readListener.totalWrites += count;
-								backendToClientBytes.addAndGet(count);
-								
-							}
-							if(totalCount != res){
-								throw new RuntimeException("totalCount != res -> "+count+" "+res);
+							if(isDebug)log.debug("Wrote "+count+" bytes from backend to client (flushed: "+flushed+")");
+							readListener.totalWrites += count;
+							backendToClientBytes.addAndGet(count);
+							if(count != res){
+								System.out.println("count != res -> "+count+" "+res);
+								return;
 							}
 						}catch(IOException e){
 							log.error("Error writing to Frontend (sink) "+((InetSocketAddress)readListener.streamConnection.getPeerAddress()).toString(),e);
@@ -551,9 +546,8 @@ public final class Layer7Router {
 					}
 					if(res == -1){
 						if(isDebug)log.debug("Backend End of stream.");
-						channel.shutdownWrites();
 						channel.flush();
-						readListener.closeAll();
+						//readListener.closeAll();
 						return;
 					}else{
 						readListener.lastActivity.set(System.currentTimeMillis());
@@ -572,9 +566,9 @@ public final class Layer7Router {
 				readListener.closeAll();
 				return;
 			}finally{
-				if(isDebug)log.debug("Suspending writes on front-end (sink)");
+				//if(isDebug)log.debug("Suspending writes on front-end (sink)");
 				if(isInfo)MDC.remove("channel");;
-				channel.suspendWrites();
+				//channel.suspendWrites();
 			}
 			
 		}
