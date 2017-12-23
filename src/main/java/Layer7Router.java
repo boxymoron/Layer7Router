@@ -43,21 +43,23 @@ public final class Layer7Router {
 			.set(org.xnio.Options.ALLOW_BLOCKING, false)
 			.set(org.xnio.Options.RECEIVE_BUFFER, 1024*8)
 			.set(org.xnio.Options.SEND_BUFFER, 1024*8)
-			.set(org.xnio.Options.READ_TIMEOUT, 30000)
-			.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
+			//.set(org.xnio.Options.READ_TIMEOUT, 30000)
+			//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
 			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
 			.set(org.xnio.Options.WORKER_IO_THREADS, 2)
 			.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
 			.set(org.xnio.Options.BACKLOG, 8192)
-			.set(org.xnio.Options.KEEP_ALIVE, true)
+			.set(org.xnio.Options.KEEP_ALIVE, false)
 			.getMap();
 	static XnioWorker worker;
 	
 	final static AtomicInteger totalAccepted = new AtomicInteger();
 	final static AtomicInteger listenersCount = new AtomicInteger();
 	final static AtomicInteger writersCount = new AtomicInteger();	
-	final static AtomicLong clientToBackendBytes = new AtomicLong();
-	final static AtomicLong backendToClientBytes = new AtomicLong();
+	final static AtomicLong globalBackendWriteBytes = new AtomicLong();
+	final static AtomicLong globalClientWriteBytes = new AtomicLong();
+	final static AtomicLong globalBackendReadBytes = new AtomicLong();
+	final static AtomicLong globalClientReadBytes = new AtomicLong();
 
 	static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
 	
@@ -74,7 +76,7 @@ public final class Layer7Router {
 
 		worker = xnio.createWorker(xnioOptions);
 		
-		final Deque<ReadListener> readListeners = new ConcurrentLinkedDeque();
+		final Deque<ReadListener> readListeners = new ConcurrentLinkedDeque<>();
 
 		final ChannelListener<AcceptingChannel<StreamConnection>> acceptListener2 = new ChannelListener<AcceptingChannel<StreamConnection>>() {
 			@Override
@@ -121,12 +123,15 @@ public final class Layer7Router {
 			public void run(){
 				while(true){
 					try{
-						Thread.sleep(10000);
+						Thread.sleep(2000);
 						final Iterator<ReadListener> iter = readListeners.iterator();
 						while(iter.hasNext()){
-							if(!iter.next().checkLiveness()){
+							ReadListener listener = iter.next();
+							if(!listener.checkLiveness()){
 								iter.remove();
-							};
+							}else{
+								if(isDebug)log.debug(listener.toString());
+							}
 						}
 					}catch(Exception e){
 						e.printStackTrace();
@@ -138,25 +143,25 @@ public final class Layer7Router {
 		reaper.start();
 		
 		int acceptedLast = totalAccepted.get();
-		long clientToBackendLast = clientToBackendBytes.get();
-		long backendToClientLast = backendToClientBytes.get();
+		long clientToBackendLast = globalBackendWriteBytes.get();
+		long backendToClientLast = globalClientWriteBytes.get();
 		long start = System.currentTimeMillis();
 		String lastFormatted="";
 		while(true){
 			Thread.sleep(2000);
 			long slept = System.currentTimeMillis() - start;
 			double acceptedPerSec = ((double)totalAccepted.get() - (double)acceptedLast) / ((double)slept/1000d);
-			double clientToBackendPerSec = (clientToBackendBytes.get() - clientToBackendLast) / ((double)slept/1000d);
-			double backendToClientPerSec = (backendToClientBytes.get() - backendToClientLast) / ((double)slept/1000d);
-			final String formatted = String.format("\tStats: %,.2f accepts/sec, %,d total accepts, %,d listeners, %,d writers, in %,d bytes, out %,d bytes, in %,.0f bytes/sec, out %,.0f bytes/sec", 
-					acceptedPerSec, totalAccepted.get(), listenersCount.get(), writersCount.get(), clientToBackendBytes.get(), backendToClientBytes.get(), clientToBackendPerSec, backendToClientPerSec);
+			double clientToBackendPerSec = (globalBackendWriteBytes.get() - clientToBackendLast) / ((double)slept/1000d);
+			double backendToClientPerSec = (globalClientWriteBytes.get() - backendToClientLast) / ((double)slept/1000d);
+			final String formatted = String.format("\tStats: %,.2f accepts/sec, %,d total accepts, %,d listeners, %,d writers, %,d BWt, %,d FWt, %,d BRt, %,d FRt, in %,.0f bytes/sec, out %,.0f bytes/sec", 
+					acceptedPerSec, totalAccepted.get(), listenersCount.get(), writersCount.get(), globalBackendWriteBytes.get(), globalClientWriteBytes.get(), globalBackendReadBytes.get(), globalClientReadBytes.get(), clientToBackendPerSec, backendToClientPerSec);
 			if(!formatted.equals(lastFormatted)){
 				System.out.println(formatted);
 			}
 			lastFormatted = formatted;
 			acceptedLast = totalAccepted.get();
-			clientToBackendLast = clientToBackendBytes.get();
-			backendToClientLast = backendToClientBytes.get();
+			clientToBackendLast = globalBackendWriteBytes.get();
+			backendToClientLast = globalClientWriteBytes.get();
 			start = System.currentTimeMillis();
 		}
 	}
@@ -174,10 +179,15 @@ public final class Layer7Router {
 		private IoFuture<StreamConnection> future;
 		private StreamConnection streamConnection;
 		private WriteListener writeListener;
-		private ReadListener(){}
-		private long totalReads=0;
-		private long totalWrites=0;
+		private long totalWritesToBackend=0;
+		private long totalWritesToFrontend=0;
+		private long totalReadsFromBackend=0;
+		private long totalReadsFromFrontend=0;
 		private boolean isProxy=false;
+	
+		private ReadListener(){
+			pooledBuffer.getResource().clear();
+		}
 		
 		@Override
 		public final void handleEvent(final ConduitStreamSourceChannel frontendChannel) {
@@ -194,34 +204,43 @@ public final class Layer7Router {
 			}
 			try {
 				final ByteBuffer buffer = pooledBuffer.getResource();
-				
-				if(future != null){
-					if(isDebug)log.debug("Suspending writes on backend (sink)");
-					future.get().getSinkChannel().suspendWrites();
-				}
 				if(!initHeaders && writeHeaders){
 					if(isProxy){
 						writeProxyHeaders(buffer);
-						return;
 					}else{
 						writeHeaders(buffer);
 					}
+					if(isDebug)log.debug("Resuming writes on Backend (sink)");
+					future.get().getSinkChannel().resumeWrites();
+					return;
 				}
-
 				long clientReadBytes=0;
 				try{
-					while ((clientReadBytes = frontendChannel.read(buffer)) > 0) {
+					if(!initHeaders && buffer.hasRemaining()){
+						return;
+					}
+					buffer.clear();
+					clientReadBytes = frontendChannel.read(buffer);
+						totalReadsFromFrontend += clientReadBytes;
+						globalClientReadBytes.addAndGet(clientReadBytes);
 						buffer.flip();
 						if(isDebug)log.debug(buffer.toString());
+						if(isDebug)log.debug("Read "+clientReadBytes+" bytes from frontend (source)");
 						if(initHeaders){
 							if(isDebug)log.debug("Suspending reads on frontend (source)");
 							frontendChannel.suspendReads();
 							initHeaders(frontendChannel, buffer);
 							return;
 						}else{
-							writeBody(buffer);
+							if(future != null){
+								if(isDebug)log.debug("Suspending reads on frontend (source)");
+								frontendChannel.suspendReads();
+								if(isDebug)log.debug("Resuming writes on Backend (sink)");
+								future.get().getSinkChannel().resumeWrites();
+							}
+							//writeBody(buffer);
 						}
-					}
+				
 				}catch(IOException e){
 					if("Connection reset by peer".equals(e.getMessage())){
 						log.info("Connection reset by Frontend (source): "+((InetSocketAddress)streamConnection.getPeerAddress()).toString());
@@ -393,7 +412,14 @@ public final class Layer7Router {
 					});
 					backendChannel.getSinkChannel().getWriteSetter().set(channel2 ->{
 						//if(isDebug)log.debug("Resuming reads on frontend (source)");//TODO why is this called multiple times in succession
-						frontendChannel.resumeReads();
+						if(isDebug)log.debug("Suspending reads on frontend (source)");
+						streamConnection.getSourceChannel().suspendReads();
+						try {
+							writeBody(buffer, channel2);
+						} catch (IOException e) {
+							closeAll();
+							return;
+						}
 					});
 					backendChannel.getSourceChannel().resumeReads();
 					backendChannel.getSinkChannel().resumeWrites();
@@ -415,9 +441,8 @@ public final class Layer7Router {
 					if(isInfo)if(isDebug)log.debug("Wrote "+backendWriteBytes+" header bytes to Backend (flushed: "+flushed+")");
 					totalWritten += backendWriteBytes;
 				}
-				clientToBackendBytes.addAndGet(totalWritten);
-				totalReads += totalWritten;
-				buffer.clear();
+				globalBackendWriteBytes.addAndGet(totalWritten);
+				totalWritesToBackend += totalWritten;
 				this.writeHeaders=false;
 			}catch(IOException e){
 				if("Broken pipe".equals(e.getMessage())){
@@ -429,23 +454,59 @@ public final class Layer7Router {
 			}
 		}
 		
-		private final void writeBody(final ByteBuffer buffer) throws IOException {
+		private final void writeBody(final ByteBuffer buffer, ConduitStreamSinkChannel channel) throws IOException {
+			if(isInfo)MDC.put("channel", streamConnection.hashCode());
+			if(allClosed){
+				return;
+			}
 			try{
 				//System.out.println(Buffers.createDumper(buffer, 1, 4).toString());
-				final ConduitStreamSinkChannel sink = future.get().getSinkChannel();
-				int totalWritten=0;
-				int backendWriteBytes=0;
-				while((backendWriteBytes = sink.write(buffer)) > 0l){
-					boolean flushed = sink.flush();
-					if(isDebug)log.debug("Wrote "+backendWriteBytes+" non-header bytes to Backend (flushed: "+flushed+")");
-					totalWritten += backendWriteBytes;
+				
+				if(!channel.isOpen()){
+					if(isDebug)log.debug("Backend sink is closed");
+					closeAll();
+					return;
 				}
-				clientToBackendBytes.addAndGet(totalWritten);
-				totalReads += totalWritten;
-				buffer.clear();
+				int remaining = buffer.remaining();
+				if(remaining == 0){
+					if(isDebug)log.debug("Suspending writes on Backend (sink)");
+					channel.suspendWrites();
+					if(isDebug)log.debug("Resuming reads on Frontend (source)");
+					streamConnection.getSourceChannel().resumeReads();
+					return;
+				}
+				if(!streamConnection.isOpen()|| !streamConnection.getSourceChannel().isOpen() || !streamConnection.getSinkChannel().isOpen()){
+					if(isDebug)log.debug("Frontend channel is closed.");
+					closeAll();
+					return;
+				}
+				int totalBackendWriteBytes=0;
+				int backendWriteBytes=0;
+				while((backendWriteBytes = channel.write(buffer)) > 0){
+					boolean flushed = channel.flush();
+					totalBackendWriteBytes+=backendWriteBytes;
+					if(isDebug)log.debug("Wrote "+backendWriteBytes+" non-header bytes to Backend (flushed: "+flushed+"). Remaining: "+(remaining-backendWriteBytes));
+					globalBackendWriteBytes.addAndGet(backendWriteBytes);
+					totalWritesToBackend += backendWriteBytes;
+				}
+				if(totalBackendWriteBytes != remaining){
+					if(isDebug)log.debug("Suspending reads on Frontend (source)");
+					streamConnection.getSourceChannel().suspendReads();
+					channel.resumeWrites();
+				}else{
+					if(totalReadsFromFrontend != totalWritesToBackend){
+						if(isDebug)log.debug("Discrepancy totalReadsFromFrontend != totalWritesToBackend: "+totalReadsFromFrontend+" : "+totalWritesToBackend);
+					}
+					if(isDebug)log.debug("Suspending writes on Backend (sink)");
+					channel.suspendWrites();
+					if(isDebug)log.debug("Resuming reads on Frontend (source)");
+					streamConnection.getSourceChannel().resumeReads();
+				}
 			}catch(IOException e){
 				log.error("Error writing body to Backend (sink) "+((InetSocketAddress)future.get().getPeerAddress()).toString(), e);
 				closeAll();
+			}finally{
+				MDC.remove("channel");
 			}
 		}
 
@@ -484,8 +545,35 @@ public final class Layer7Router {
 						e.printStackTrace();
 					}
 				}
-				log.info(String.format("TCP Session Closed. Frontend: "+((InetSocketAddress)streamConnection.getPeerAddress()).toString()+", Backend: "+backendAddr+" Stats: %,d total reads, %,d total writes", totalReads, totalWrites));
+				log.info(String.format("TCP Session Closed. Frontend: "+((InetSocketAddress)streamConnection.getPeerAddress()).toString()+", Backend: "+backendAddr+" Stats: %,d writes to backend, %,d reads from frontend, %,d writes to frontend, %,d reads from backend", totalWritesToBackend, totalReadsFromFrontend, totalWritesToFrontend, totalReadsFromBackend));
 			}
+		}
+
+		@Override
+		public String toString() {
+			StringBuilder builder = new StringBuilder();
+			builder.append("ReadListener [lastActivity=").append(lastActivity).append(", pooledBuffer=")
+					.append(pooledBuffer.getResource()).append(", initHeaders=").append(initHeaders).append(", writeHeaders=")
+					.append(writeHeaders).append(", allClosed=").append(allClosed).append(", future=").append(future)
+					.append(", streamConnection=").append(streamConnection).append(", writeListener=")
+					.append(writeListener).append(", totalWritesToBackend=").append(totalWritesToBackend)
+					.append(", totalWritesToFrontend=").append(totalWritesToFrontend).append(", totalReadsFromBackend=")
+					.append(totalReadsFromBackend).append(", totalReadsFromFrontend=").append(totalReadsFromFrontend)
+					.append(", isProxy=").append(isProxy);
+			builder.append(", frontent source resumed? ").append(streamConnection.getSinkChannel().isWriteResumed());
+			builder.append(", frontent sink resumed? ").append(streamConnection.getSinkChannel().isWriteResumed());
+			if(future != null){
+				if(future.getStatus().equals(Status.DONE)){
+					try {
+						builder.append(", backend sink resumed? ").append(future.get().getSinkChannel().isWriteResumed());
+						builder.append(", backend source resumed? ").append(future.get().getSourceChannel().isReadResumed());
+					} catch (CancellationException | IOException e) {
+						e.printStackTrace();
+					}
+				}
+			}
+			builder.append("]");
+			return builder.toString();
 		}
 	}
 
@@ -508,6 +596,11 @@ public final class Layer7Router {
 				readListener.closeAll();
 				return;
 			}
+			if(!channel.isOpen()){
+				if(isDebug)log.debug("Frontent sink is closed.");
+				readListener.closeAll();
+				return;
+			}
 			try {
 				if(!readListener.future.get().isOpen()){
 					if(isDebug)log.debug("Backend channel is closed.");
@@ -526,14 +619,16 @@ public final class Layer7Router {
 
 				try{
 					while((res = readListener.future.get().getSourceChannel().read(buffer)) > 0){
+						readListener.totalReadsFromBackend += res;
+						globalBackendReadBytes.addAndGet(res);
 						buffer.flip();
 						try{
 							long count = channel.write(buffer);
 							boolean flushed = channel.flush();
-							if(isDebug)log.debug("Read "+res+" bytes from frontend (sink)");
+							if(isDebug)log.debug("Read "+res+" bytes from Backend (source)");
 							if(isDebug)log.debug("Wrote "+count+" bytes from backend to client (flushed: "+flushed+")");
-							readListener.totalWrites += count;
-							backendToClientBytes.addAndGet(count);
+							readListener.totalWritesToFrontend += count;
+							globalClientWriteBytes.addAndGet(count);
 							if(count != res){
 								System.out.println("count != res -> "+count+" "+res);
 								return;
