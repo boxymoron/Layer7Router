@@ -10,7 +10,12 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 /**
+ * This is a Java implementation of the algorithm detailed in: 'A Fast, Minimal Memory, Consistent Hash Algorithm'
+ * by John Lamping and Eric Veach at Google. It is also known as Jump Consistent Hashing. The algorithm can be used
+ * to implement partitioning/hashing of data based on a hash (long).<br> 
  * 
+ * The original algorithm was implemented in C++:<br>
+ * <code>
  * <pre>
 	int32_t JumpConsistentHash(uint64_t key, int32_t num_buckets) {
 		int64_t b = ­1, j = 0;
@@ -20,16 +25,23 @@ import java.util.stream.Collectors;
 			j = (b + 1) * (double(1LL << 31) / double((key >> 33) + 1));
 		}
 		return b;
-	}</pre>
+	}</pre></code>
  *
- * @author royer
+ * @authors John Lamping, Eric Veach @ Google
+ *
  */
 public class JumpConsistentHash {
 
+	/**
+	 * Test: Generate hashes for i from 0 to TOTAL.<br>
+	 * Throughput is ~1 million hashes/sec on a Intel Dual Core i7@3.1 GHz 256 KB L2 cache 4MB L3 cache
+	 * @param args
+	 * @throws InterruptedException
+	 */
 	public static void main(String[] args) throws InterruptedException{
 		//Thread.sleep(30000);
 		final int BUCKETS = 32;
-		final long TOTAL = 1024l*1024*1024*4l;
+		final long TOTAL = 1024l*1024;
 		final int NUM_THREADS = 4;
 
 		final Map<Integer, AtomicLong> counts = new ConcurrentHashMap<>(256);
