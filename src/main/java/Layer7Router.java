@@ -533,16 +533,17 @@ public final class Layer7Router {
 			try{
 				buffer.clear();
 				int res = channel.read(buffer);
-				if(res > 0){
-					if(isDebug)log.debug("Read "+res+" bytes from Backend (source)");
-					frontendReadListener.totalReadsFromBackend += res;
-					globalBackendReadBytes.addAndGet(res);
-					buffer.flip();
-				}else if(res == -1){
+				if(res == -1){
 					if(isDebug)log.debug("Backend End of stream.");
 					frontendReadListener.closeAll();
 					return;
 				}
+				buffer.flip();
+
+				if(isDebug)log.debug("Read "+res+" bytes from Backend (source)");
+				frontendReadListener.totalReadsFromBackend += res;
+				globalBackendReadBytes.addAndGet(res);
+
 				if(isDebug)log.debug("Resuming writes on frontend (sink)");
 				frontendReadListener.streamConnection.getSinkChannel().resumeWrites();//resume writes to client
 			} catch (IOException e) {
