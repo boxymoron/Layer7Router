@@ -16,7 +16,7 @@
 #include <pthread.h>
 
 #define BUFSIZE 4096
-#define NUMCONNS 62000
+#define NUMCONNS 30000
 #define SERVERADDR "192.168.1.218"
 #define SERVERPORT 7080
 #define SLEEP_MS 10
@@ -32,7 +32,7 @@ int connected = 0;
 void chunkcb(struct evhttp_request * req, void * arg)
 {
     int s = evbuffer_remove( req->input_buffer, &buf, BUFSIZE );
-    //printf("Read %d bytes: %s\n", s, &buf);
+    printf("Read %d bytes: %s\n", s, &buf);
     bytes_recvd += s;
     chunks_recvd++;
     if(connected >= NUMCONNS && chunks_recvd%10000==0)
@@ -62,8 +62,8 @@ int main(int argc, char **argv)
             evhttp_request = evhttp_request_new(reqcb, NULL);
             evhttp_request->chunk_cb = chunkcb;
             //sprintf(&path, "/test/%d", ++connected);
-
-            if(i%100==0)  printf("Req: %s\t->\t%s\n", addr, &path);
+	    ++connected;
+            printf("Req: %s\t->\t%s\n", addr, &path);
             evhttp_make_request( evhttp_connection, evhttp_request, EVHTTP_REQ_GET, path );
             evhttp_connection_set_timeout(evhttp_request->evcon, 864000);
             event_loop( EVLOOP_NONBLOCK );
