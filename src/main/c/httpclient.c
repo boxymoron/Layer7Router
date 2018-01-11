@@ -1,3 +1,6 @@
+/**
+ * Author: https://www.metabrew.com/article/a-million-user-comet-application-with-mochiweb-part-3
+ */
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/queue.h>
@@ -48,17 +51,18 @@ int main(int argc, char **argv)
     struct evhttp *evhttp_connection;
     struct evhttp_request *evhttp_request;
     char addr[16];
-    char path[32]; // eg: "/test/123"
+    char path[] = "/favicon.ico"; // eg: "/test/123"
     int i,octet;
-    for(octet=1; octet<=17; octet++){
-        sprintf(&addr, "10.224.0.%d", octet);
+    for(octet=225; octet<=235; octet++){
+        sprintf(&addr, "191.168.1.%d", octet);
         for(i=1;i<=NUMCONNS;i++) {
             evhttp_connection = evhttp_connection_new(SERVERADDR, SERVERPORT);
             evhttp_connection_set_local_address(evhttp_connection, &addr);
             evhttp_set_timeout(evhttp_connection, 864000); // 10 day timeout
             evhttp_request = evhttp_request_new(reqcb, NULL);
             evhttp_request->chunk_cb = chunkcb;
-            sprintf(&path, "/test/%d", ++connected);
+            //sprintf(&path, "/test/%d", ++connected);
+
             if(i%100==0)  printf("Req: %s\t->\t%s\n", addr, &path);
             evhttp_make_request( evhttp_connection, evhttp_request, EVHTTP_REQ_GET, path );
             evhttp_connection_set_timeout(evhttp_request->evcon, 864000);
