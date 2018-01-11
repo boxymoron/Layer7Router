@@ -17,7 +17,7 @@
 
 #define BUFSIZE 4096
 #define NUMCONNS 62000
-#define SERVERADDR "192.161.1.218"
+#define SERVERADDR "192.168.1.218"
 #define SERVERPORT 7080
 #define SLEEP_MS 10
 
