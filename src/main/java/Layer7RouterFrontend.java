@@ -11,6 +11,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -59,10 +60,10 @@ public final class Layer7RouterFrontend {
 	
 	final static AtomicInteger totalAccepted = new AtomicInteger();
 	final static AtomicInteger sessionsCount = new AtomicInteger();
-	final static AtomicLong globalBackendWriteBytes = new AtomicLong();
+
 	final static AtomicLong globalClientWriteBytes = new AtomicLong();
 	final static AtomicLong globalBackendReadBytes = new AtomicLong();
-	final static AtomicLong globalClientReadBytes = new AtomicLong();
+
 
 	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
 	final static ByteBufferPool pool = CustomByteBufferPool.allocatePool(4096);
@@ -80,6 +81,57 @@ public final class Layer7RouterFrontend {
 
 		worker = xnio.createWorker(xnioOptions);
 		
+		ForkJoinPool.commonPool().execute(()->{
+			run();
+		});
+		
+		final OperatingSystemMXBean operatingSystemMXBean = ManagementFactory.getOperatingSystemMXBean();
+		final Runtime runtime = Runtime.getRuntime();
+		MemoryPoolMXBean edenBean = ManagementFactory.getMemoryPoolMXBeans().stream().filter(b->"PS Eden Space".equals(b.getName())).findFirst().get();
+		BufferPoolMXBean bufferPoolBean = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream().filter(bb->"direct".equals(bb.getName())).findFirst().get();
+		
+		int acceptedLast = totalAccepted.get();
+
+		long backendToClientLast = globalBackendReadBytes.get();
+		long clientToBackendLast = globalClientWriteBytes.get();
+		long start = System.currentTimeMillis();
+		String lastFormatted="";
+		while(true){
+			Thread.sleep(2000);
+			long slept = System.currentTimeMillis() - start;
+			double acceptedPerSec = ((double)totalAccepted.get() - (double)acceptedLast) / ((double)slept/1000d);
+			
+			double clientToBackendPerSec = (globalClientWriteBytes.get() - clientToBackendLast) / ((double)slept/1000d);
+			String clientToBackendPerSecUnits = "KB";
+			if(clientToBackendPerSec > ((1024*1024)-1)) {
+				clientToBackendPerSecUnits = "MB";
+				clientToBackendPerSec = clientToBackendPerSec / (1024f*1024f);
+			}else {
+				clientToBackendPerSec = clientToBackendPerSec / 1024f;
+			}
+			
+			double backendToClientPerSec = (globalBackendReadBytes.get() - backendToClientLast) / ((double)slept/1000d);
+			String backendToClientPerSecUnits = "KB";
+			if(backendToClientPerSec > ((1024*1024)-1)) {
+				backendToClientPerSecUnits = "MB";
+				backendToClientPerSec = backendToClientPerSec / (1024f*1024f);
+			}else {
+				backendToClientPerSec = backendToClientPerSec / 1024f;
+			}
+			final String formatted = String.format("Sess: %,.1f per/sec, %,d total, %,d curr, %,d FW, %,d BR, out %,.1f %s/sec, in %,.1f %s/sec, Load %,.2f, HeapFree %,.1f MB, EdenUsed %,.1f MB, Direct %,.1f MB", 
+					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), globalClientWriteBytes.get(), globalBackendReadBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, operatingSystemMXBean.getSystemLoadAverage(), ((float)runtime.freeMemory())/(1024f*1024f), ((float)edenBean.getUsage().getUsed())/(1024f*1024f), ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f));
+			if(!formatted.equals(lastFormatted)){
+				System.out.println(formatted);
+			}
+			lastFormatted = formatted;
+			acceptedLast = totalAccepted.get();
+			backendToClientLast = globalBackendReadBytes.get();
+			clientToBackendLast = globalClientWriteBytes.get();
+			start = System.currentTimeMillis();
+		}
+	}
+
+	private static void run() {
 		final AtomicInteger connections= new AtomicInteger();
 		final Deque<IoFuture<StreamConnection>> futures = new ConcurrentLinkedDeque<>();
 		final InetSocketAddress backendAddr = new InetSocketAddress(routerOptions.backend_host, routerOptions.backend_port);
@@ -91,7 +143,9 @@ public final class Layer7RouterFrontend {
 					@Override
 					public void handleEvent(StreamConnection channel) {
 						connections.incrementAndGet();
-						System.out.println("Connections: "+connections.get());
+						totalAccepted.incrementAndGet();
+						sessionsCount.incrementAndGet();
+						//System.out.println("Connections: "+connections.get());
 						ByteBuffer readBuff = pool.allocate();
 						readBuff.clear();
 						//System.out.println(addr+" Connected to "+backendAddr);
@@ -101,7 +155,8 @@ public final class Layer7RouterFrontend {
 							buff.put(req.getBytes());
 							buff.flip();
 							try {
-								c.write(buff);
+								int count = c.write(buff);
+								globalClientWriteBytes.addAndGet(count);
 								c.flush();
 							} catch (IOException e) {
 								e.printStackTrace();
@@ -112,6 +167,7 @@ public final class Layer7RouterFrontend {
 							try {
 								int count = c.read(readBuff);
 								if(count > 0) {
+									globalBackendReadBytes.addAndGet(count);
 									//System.out.println("read "+count+" bytes");
 								}else {
 									c.suspendReads();
@@ -119,6 +175,9 @@ public final class Layer7RouterFrontend {
 							} catch (IOException e) {
 								e.printStackTrace();
 							}
+						});
+						channel.setCloseListener(c->{
+							sessionsCount.decrementAndGet();
 						});
 						channel.getSinkChannel().resumeWrites();
 						channel.getSourceChannel().resumeReads();
@@ -131,48 +190,6 @@ public final class Layer7RouterFrontend {
 				futures.push(future);
 				//Thread.sleep(1000);
 			}
-		}
-		
-		final OperatingSystemMXBean operatingSystemMXBean = ManagementFactory.getOperatingSystemMXBean();
-		final Runtime runtime = Runtime.getRuntime();
-		MemoryPoolMXBean edenBean = ManagementFactory.getMemoryPoolMXBeans().stream().filter(b->"PS Eden Space".equals(b.getName())).findFirst().get();
-		BufferPoolMXBean bufferPoolBean = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream().filter(bb->"direct".equals(bb.getName())).findFirst().get();
-		
-		int acceptedLast = totalAccepted.get();
-		long clientToBackendLast = globalBackendWriteBytes.get();
-		long backendToClientLast = globalClientWriteBytes.get();
-		long start = System.currentTimeMillis();
-		String lastFormatted="";
-		while(true){
-			Thread.sleep(2000);
-			long slept = System.currentTimeMillis() - start;
-			double acceptedPerSec = ((double)totalAccepted.get() - (double)acceptedLast) / ((double)slept/1000d);
-			double clientToBackendPerSec = (globalBackendWriteBytes.get() - clientToBackendLast) / ((double)slept/1000d);
-			String clientToBackendPerSecUnits = "KB";
-			if(clientToBackendPerSec > ((1024*1024)-1)) {
-				clientToBackendPerSecUnits = "MB";
-				clientToBackendPerSec = clientToBackendPerSec / (1024f*1024f);
-			}else {
-				clientToBackendPerSec = clientToBackendPerSec / 1024f;
-			}
-			double backendToClientPerSec = (globalClientWriteBytes.get() - backendToClientLast) / ((double)slept/1000d);
-			String backendToClientPerSecUnits = "KB";
-			if(backendToClientPerSec > ((1024*1024)-1)) {
-				backendToClientPerSecUnits = "MB";
-				backendToClientPerSec = backendToClientPerSec / (1024f*1024f);
-			}else {
-				backendToClientPerSec = backendToClientPerSec / 1024f;
-			}
-			final String formatted = String.format("Sess: %,.1f per/sec, %,d total, %,d curr, %,d FR -> %,d BW, %,d FW <- %,d BR, in %,.1f %s/sec, out %,.1f %s/sec, Load %,.2f, HeapFree %,.1f MB, EdenUsed %,.1f MB, Direct %,.1f MB", 
-					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), globalClientReadBytes.get(), globalBackendWriteBytes.get(), globalClientWriteBytes.get(), globalBackendReadBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, operatingSystemMXBean.getSystemLoadAverage(), ((float)runtime.freeMemory())/(1024f*1024f), ((float)edenBean.getUsage().getUsed())/(1024f*1024f), ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f));
-			if(!formatted.equals(lastFormatted)){
-				System.out.println(formatted);
-			}
-			lastFormatted = formatted;
-			acceptedLast = totalAccepted.get();
-			clientToBackendLast = globalBackendWriteBytes.get();
-			backendToClientLast = globalClientWriteBytes.get();
-			start = System.currentTimeMillis();
 		}
 	}
 	
