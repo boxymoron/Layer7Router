@@ -39,8 +39,8 @@ public final class Layer7RouterBackend {
 	final static Xnio xnio = Xnio.getInstance();
 	final static OptionMap xnioOptions = OptionMap.builder()
 			.set(org.xnio.Options.ALLOW_BLOCKING, false)
-			.set(org.xnio.Options.RECEIVE_BUFFER, 1024*4)
-			.set(org.xnio.Options.SEND_BUFFER, 1024*4)
+			.set(org.xnio.Options.RECEIVE_BUFFER, 1024*2)
+			.set(org.xnio.Options.SEND_BUFFER, 1024*2)
 			//.set(org.xnio.Options.READ_TIMEOUT, 30000)
 			//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
 			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
@@ -56,7 +56,7 @@ public final class Layer7RouterBackend {
 	final static AtomicLong globalClientWriteBytes = new AtomicLong();
 	final static AtomicLong globalClientReadBytes = new AtomicLong();
 
-	static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*4, 1024*4 * 1024*1024);
+	static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*2, 1024*2 * 1024*1024);
 	//final static ByteBufferPool pool = ByteBufferPool.SMALL_DIRECT;
 	
 	final static Options routerOptions = new Options();
