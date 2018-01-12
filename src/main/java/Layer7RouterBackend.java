@@ -93,7 +93,7 @@ public final class Layer7RouterBackend {
 						readListener.writeListener = writeListener;
 
 						accepted.getSourceChannel().resumeReads();
-						accepted.getSinkChannel().resumeWrites();
+						//accepted.getSinkChannel().resumeWrites();
 						readListeners.push(readListener);
 					}
 				} catch (IOException e) {
@@ -332,14 +332,17 @@ public final class Layer7RouterBackend {
 			channel.suspendWrites();
 			try {
 				if(init) {
-					final String PROXY_HEADER = "HTTP/1.1 200 OK\r\n\r\n";
-					final ByteBuffer okBuff = ByteBuffer.allocate(PROXY_HEADER.getBytes().length);
-					okBuff.put(PROXY_HEADER.getBytes());
+					final String ok_header = "HTTP/1.1 200 OK\r\n\r\n";
+					final ByteBuffer okBuff = ByteBuffer.allocate(ok_header.getBytes().length);
+					okBuff.put(ok_header.getBytes());
 					okBuff.flip();
-					channel.write(okBuff);
+					int count = channel.write(okBuff);
+					boolean flushed = channel.flush();
+					//globalClientWriteBytes.addAndGet(count);
 				}
 				int remaining = readListener.buffer.remaining();
 				if(remaining == 0){
+					readListener.streamConnection.getSourceChannel().resumeReads();
 					return;
 				}
 				try{
@@ -351,6 +354,8 @@ public final class Layer7RouterBackend {
 					if(count != remaining){
 						channel.resumeWrites();
 						return;
+					}else {
+						readListener.streamConnection.getSourceChannel().resumeReads();
 					}
 				}catch(IOException e){
 					log.error("Error writing to Frontend (sink) "+((InetSocketAddress)readListener.streamConnection.getPeerAddress()).toString(),e);
