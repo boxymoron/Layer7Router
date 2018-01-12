@@ -144,16 +144,11 @@ public final class Layer7RouterBackend {
 		reaper.setName("Idle Connection Reaper");
 		reaper.start();
 		
-		final OperatingSystemMXBean operatingSystemMXBean = ManagementFactory.getOperatingSystemMXBean();
-		final Runtime runtime = Runtime.getRuntime();
-		MemoryPoolMXBean edenBean = ManagementFactory.getMemoryPoolMXBeans().stream().filter(b->"PS Eden Space".equals(b.getName())).findFirst().get();
-		BufferPoolMXBean bufferPoolBean = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream().filter(bb->"direct".equals(bb.getName())).findFirst().get();
-		OperatingSystemMXBean osmxb = ManagementFactory.getOperatingSystemMXBean();
-		MemoryMXBean mmxb = ManagementFactory.getMemoryMXBean();
-		ThreadMXBean tmxb = ManagementFactory.getThreadMXBean();
-		tmxb.setThreadCpuTimeEnabled(true);
 		final Map <Long, Long> workerCpuTimes = new LinkedHashMap<Long, Long>();
-		workerCpuTimes.put(Thread.currentThread().getId(), tmxb.getThreadCpuTime(Thread.currentThread().getId()));//monitor thyself
+		final Runtime runtime = Runtime.getRuntime();
+		final BufferPoolMXBean bufferPoolBean = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream().filter(bb->"direct".equals(bb.getName())).findFirst().get();
+		final MemoryMXBean mmxb = ManagementFactory.getMemoryMXBean();
+		final ThreadMXBean tmxb = getWorkerCpuTimes(workerCpuTimes);
 		
 		int acceptedLast = totalAccepted.get();
 		long clientToBackendLast = globalClientReadBytes.get();
@@ -163,20 +158,9 @@ public final class Layer7RouterBackend {
 		while(true){
 			Thread.sleep(2000);
 			long slept = System.currentTimeMillis() - start;
-			
-			
-			Thread[] threads = getAllThreads();
-			Arrays.sort(threads, new Comparator<Thread>(){
-				@Override
-				public int compare(Thread o1, Thread o2) {
-					return new Long(o1.getId()).compareTo(new Long(o2.getId()));
-				}});
-			for(Thread thread : threads){
-				workerCpuTimes.put(thread.getId(), tmxb.getThreadCpuTime(thread.getId()));
-			}
-			
-			StringBuilder cpuStats = getCpuStats(tmxb, workerCpuTimes, slept);
-			StringBuilder memoryStats = getMemoryStats(runtime, mmxb);
+
+			final StringBuilder cpuStats = getCpuStats(tmxb, workerCpuTimes, ((double)slept)/1000d);
+			final StringBuilder memoryStats = getMemoryStats(runtime, mmxb);
 			
 			double acceptedPerSec = ((double)totalAccepted.get() - (double)acceptedLast) / ((double)slept/1000d);
 			double backendToClientPerSec = (globalClientWriteBytes.get() - backendToClientLast) / ((double)slept/1000d);
@@ -428,6 +412,23 @@ public final class Layer7RouterBackend {
 		}
 	}
 	
+	private static ThreadMXBean getWorkerCpuTimes(final Map<Long, Long> workerCpuTimes) {
+		ThreadMXBean tmxb = ManagementFactory.getThreadMXBean();
+		tmxb.setThreadCpuTimeEnabled(true);
+		
+		workerCpuTimes.put(Thread.currentThread().getId(), tmxb.getThreadCpuTime(Thread.currentThread().getId()));//monitor thyself
+		Thread[] threads = getAllThreads();
+		Arrays.sort(threads, new Comparator<Thread>(){
+			@Override
+			public int compare(Thread o1, Thread o2) {
+				return new Long(o1.getId()).compareTo(new Long(o2.getId()));
+			}});
+		for(Thread thread : threads){
+			workerCpuTimes.put(thread.getId(), tmxb.getThreadCpuTime(thread.getId()));
+		}
+		return tmxb;
+	}
+	
 	private static ThreadGroup rootThreadGroup = null;
 	private final static ThreadGroup getRootThreadGroup( ) {
 	    if ( rootThreadGroup != null )
@@ -455,10 +456,10 @@ public final class Layer7RouterBackend {
 	
 	private static StringBuilder getMemoryStats(Runtime runtime, MemoryMXBean mmxb) {
 		StringBuilder memoryStats = new StringBuilder();
-		memoryStats.append(" Heap ").append(String.format("%04d", mmxb.getHeapMemoryUsage().getMax()/MB))
+		memoryStats.append("Heap ").append(String.format("%04d", mmxb.getHeapMemoryUsage().getMax()/MB))
 		.append("/").append(String.format("%04d", runtime.totalMemory()/MB))
 		.append("/").append(String.format("%04d", mmxb.getHeapMemoryUsage().getUsed()/MB))
-		.append("/").append(String.format("%04d", runtime.freeMemory()/MB)).append(" MB (Max/Total/Used/Free)");
+		.append("/").append(String.format("%04d", runtime.freeMemory()/MB)).append(" MB (M/T/U/F)");
 		return memoryStats;
 	}
 
