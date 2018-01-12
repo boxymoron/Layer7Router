@@ -56,7 +56,7 @@ public final class Layer7RouterBackend {
 	final static AtomicLong globalClientWriteBytes = new AtomicLong();
 	final static AtomicLong globalClientReadBytes = new AtomicLong();
 
-	static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*2, 1024*2 * 1024*1024);
+	static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*2, Integer.MAX_VALUE);
 	//final static ByteBufferPool pool = ByteBufferPool.SMALL_DIRECT;
 	
 	final static Options routerOptions = new Options();
