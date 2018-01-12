@@ -1,12 +1,18 @@
 import java.io.IOException;
 import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryPoolMXBean;
 import java.lang.management.OperatingSystemMXBean;
+import java.lang.management.ThreadMXBean;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -34,7 +40,8 @@ import org.xnio.conduits.ConduitStreamSourceChannel;
 public final class Layer7RouterBackend {
 
 	final static Logger log = Logger.getLogger(Layer7RouterBackend.class);
-
+	final private static int MB = 1024*1024;
+	
 	final static Xnio xnio = Xnio.getInstance();
 	final static OptionMap xnioOptions = OptionMap.builder()
 			.set(org.xnio.Options.ALLOW_BLOCKING, false)
@@ -141,6 +148,12 @@ public final class Layer7RouterBackend {
 		final Runtime runtime = Runtime.getRuntime();
 		MemoryPoolMXBean edenBean = ManagementFactory.getMemoryPoolMXBeans().stream().filter(b->"PS Eden Space".equals(b.getName())).findFirst().get();
 		BufferPoolMXBean bufferPoolBean = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream().filter(bb->"direct".equals(bb.getName())).findFirst().get();
+		OperatingSystemMXBean osmxb = ManagementFactory.getOperatingSystemMXBean();
+		MemoryMXBean mmxb = ManagementFactory.getMemoryMXBean();
+		ThreadMXBean tmxb = ManagementFactory.getThreadMXBean();
+		tmxb.setThreadCpuTimeEnabled(true);
+		final Map <Long, Long> workerCpuTimes = new LinkedHashMap<Long, Long>();
+		workerCpuTimes.put(Thread.currentThread().getId(), tmxb.getThreadCpuTime(Thread.currentThread().getId()));//monitor thyself
 		
 		int acceptedLast = totalAccepted.get();
 		long clientToBackendLast = globalClientReadBytes.get();
@@ -150,6 +163,21 @@ public final class Layer7RouterBackend {
 		while(true){
 			Thread.sleep(2000);
 			long slept = System.currentTimeMillis() - start;
+			
+			
+			Thread[] threads = getAllThreads();
+			Arrays.sort(threads, new Comparator<Thread>(){
+				@Override
+				public int compare(Thread o1, Thread o2) {
+					return new Long(o1.getId()).compareTo(new Long(o2.getId()));
+				}});
+			for(Thread thread : threads){
+				workerCpuTimes.put(thread.getId(), tmxb.getThreadCpuTime(thread.getId()));
+			}
+			
+			StringBuilder cpuStats = getCpuStats(tmxb, workerCpuTimes, slept);
+			StringBuilder memoryStats = getMemoryStats(runtime, mmxb);
+			
 			double acceptedPerSec = ((double)totalAccepted.get() - (double)acceptedLast) / ((double)slept/1000d);
 			double backendToClientPerSec = (globalClientWriteBytes.get() - backendToClientLast) / ((double)slept/1000d);
 			String backendToClientPerSecUnits = "KB";
@@ -169,8 +197,8 @@ public final class Layer7RouterBackend {
 				clientToBackendPerSec = clientToBackendPerSec / 1024f;
 			}
 			
-			final String formatted = String.format("Sess: %,.1f per/sec, %,d total, %,d curr, %,d FR, %,d FW, in %,.1f %s/sec, out %,.1f %s/sec, Load %,.2f, HeapFree %,.1f MB, EdenUsed %,.1f MB, Direct %,.1f MB", 
-					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), globalClientReadBytes.get(), globalClientWriteBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, operatingSystemMXBean.getSystemLoadAverage(), ((float)runtime.freeMemory())/(1024f*1024f), ((float)edenBean.getUsage().getUsed())/(1024f*1024f), ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f));
+			final String formatted = String.format("Sess: %,.1f per/sec, %,d total, %,d curr, %,d FR, %,d FW, in %,.1f %s/sec, out %,.1f %s/sec, Direct %,.1f MB, %s, %s", 
+					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), globalClientReadBytes.get(), globalClientWriteBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f), memoryStats, cpuStats);
 			if(!formatted.equals(lastFormatted)){
 				System.out.println(formatted);
 			}
@@ -398,6 +426,75 @@ public final class Layer7RouterBackend {
 			builder.append("Options: router_port=").append(listen_port);
 			return builder.toString();
 		}
+	}
+	
+	private static ThreadGroup rootThreadGroup = null;
+	private final static ThreadGroup getRootThreadGroup( ) {
+	    if ( rootThreadGroup != null )
+	        return rootThreadGroup;
+	    ThreadGroup tg = Thread.currentThread( ).getThreadGroup( );
+	    ThreadGroup ptg;
+	    while ( (ptg = tg.getParent( )) != null )
+	        tg = ptg;
+	    return tg;
+	}
+	
+	private final static Thread[] getAllThreads( ) {
+	    final ThreadGroup root = getRootThreadGroup( );
+	    final ThreadMXBean thbean = ManagementFactory.getThreadMXBean( );
+	    int nAlloc = thbean.getThreadCount( );
+	    int n = 0;
+	    Thread[] threads;
+	    do {
+	        nAlloc *= 2;
+	        threads = new Thread[ nAlloc ];
+	        n = root.enumerate( threads, true );
+	    } while ( n == nAlloc );
+	    return java.util.Arrays.copyOf( threads, n );
+	}
+	
+	private static StringBuilder getMemoryStats(Runtime runtime, MemoryMXBean mmxb) {
+		StringBuilder memoryStats = new StringBuilder();
+		memoryStats.append(" Heap ").append(String.format("%04d", mmxb.getHeapMemoryUsage().getMax()/MB))
+		.append("/").append(String.format("%04d", runtime.totalMemory()/MB))
+		.append("/").append(String.format("%04d", mmxb.getHeapMemoryUsage().getUsed()/MB))
+		.append("/").append(String.format("%04d", runtime.freeMemory()/MB)).append(" MB (Max/Total/Used/Free)");
+		return memoryStats;
+	}
+
+	private static StringBuilder getCpuStats(ThreadMXBean tmxb, final Map<Long, Long> workerCpuTimes, final double deltaSeconds) {
+		StringBuilder threadStats = new StringBuilder();
+		double totalCpuUsage = 0;
+		for(Iterator<Long> iter = workerCpuTimes.keySet().iterator(); iter.hasNext();){
+			Long threadId = iter.next();
+			long previousCpuTimeNanos = workerCpuTimes.get(threadId);
+			//System.out.println(previousCpuTimeNanos);
+			long currCpuTimeNanos = tmxb.getThreadCpuTime(threadId);//this seems to have a precision of 10 uS
+			double deltaCpuTimeNanos = currCpuTimeNanos - previousCpuTimeNanos;
+			double cpuUsage = ((deltaCpuTimeNanos/(double)1000000000d)/deltaSeconds);
+			totalCpuUsage+=cpuUsage;
+			Thread currThread = getThread(threadId);
+			if(currThread == null){
+				iter.remove();
+				continue;
+			}else if(currThread.getName().matches("(?i).*?(reference|finalizer|dispatcher|reap).*")) {
+				iter.remove();
+				continue;
+			}
+			threadStats.append(" | ").append(currThread.getName()).append(" ")
+			.append(String.format("%03.1f", cpuUsage*(double)100)).append("%");
+			workerCpuTimes.put(threadId, currCpuTimeNanos);
+		}
+		threadStats.append(" | Cpu Total ").append(String.format("%03.1f", totalCpuUsage*(double)100)).append("%");
+		return threadStats;
+	}
+	
+	final private static Thread getThread( final long id ) {
+	    final Thread[] threads = getAllThreads( );
+	    for ( Thread thread : threads )
+	        if ( thread.getId( ) == id )
+	            return thread;
+	    return null;
 	}
 
 }
