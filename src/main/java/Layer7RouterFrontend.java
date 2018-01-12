@@ -91,7 +91,7 @@ public final class Layer7RouterFrontend {
 					@Override
 					public void handleEvent(StreamConnection channel) {
 						connections.incrementAndGet();
-						System.out.println("Connections: "+connections.incrementAndGet());
+						System.out.println("Connections: "+connections.get());
 						ByteBuffer readBuff = pool.allocate();
 						readBuff.clear();
 						//System.out.println(addr+" Connected to "+backendAddr);
