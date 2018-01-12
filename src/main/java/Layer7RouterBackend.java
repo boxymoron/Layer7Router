@@ -351,7 +351,7 @@ public final class Layer7RouterBackend {
 					okBuff.flip();
 					int count = channel.write(okBuff);
 					boolean flushed = channel.flush();
-					//globalClientWriteBytes.addAndGet(count);
+					globalClientWriteBytes.addAndGet(count);
 				}
 				int remaining = readListener.buffer.remaining();
 				if(remaining == 0){
