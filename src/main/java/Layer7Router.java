@@ -100,7 +100,7 @@ public final class Layer7Router {
 						readListener.writeListener = writeListener;
 
 						accepted.getSourceChannel().resumeReads();
-						accepted.getSinkChannel().resumeWrites();
+						//accepted.getSinkChannel().resumeWrites();
 						readListeners.push(readListener);
 					}
 				} catch (IOException e) {
