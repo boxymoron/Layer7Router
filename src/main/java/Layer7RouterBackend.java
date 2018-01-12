@@ -143,6 +143,7 @@ public final class Layer7RouterBackend {
 		BufferPoolMXBean bufferPoolBean = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream().filter(bb->"direct".equals(bb.getName())).findFirst().get();
 		
 		int acceptedLast = totalAccepted.get();
+		long clientToBackendLast = globalClientReadBytes.get();
 		long backendToClientLast = globalClientWriteBytes.get();
 		long start = System.currentTimeMillis();
 		String lastFormatted="";
@@ -158,13 +159,24 @@ public final class Layer7RouterBackend {
 			}else {
 				backendToClientPerSec = backendToClientPerSec / 1024f;
 			}
-			final String formatted = String.format("Sess: %,.1f per/sec, %,d total, %,d curr, %,d FR, %,d FW, out %,.1f %s/sec, Load %,.2f, HeapFree %,.1f MB, EdenUsed %,.1f MB, Direct %,.1f MB", 
-					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), globalClientReadBytes.get(), globalClientWriteBytes.get(), backendToClientPerSec, backendToClientPerSecUnits, operatingSystemMXBean.getSystemLoadAverage(), ((float)runtime.freeMemory())/(1024f*1024f), ((float)edenBean.getUsage().getUsed())/(1024f*1024f), ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f));
+			
+			double clientToBackendPerSec = (globalClientReadBytes.get() - clientToBackendLast) / ((double)slept/1000d);
+			String clientToBackendPerSecUnits = "KB";
+			if(clientToBackendPerSec > ((1024*1024)-1)) {
+				clientToBackendPerSecUnits = "MB";
+				clientToBackendPerSec = clientToBackendPerSec / (1024f*1024f);
+			}else {
+				clientToBackendPerSec = clientToBackendPerSec / 1024f;
+			}
+			
+			final String formatted = String.format("Sess: %,.1f per/sec, %,d total, %,d curr, %,d FR, %,d FW, in %,.1f %s/sec ,out %,.1f %s/sec, Load %,.2f, HeapFree %,.1f MB, EdenUsed %,.1f MB, Direct %,.1f MB", 
+					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), globalClientReadBytes.get(), globalClientWriteBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, operatingSystemMXBean.getSystemLoadAverage(), ((float)runtime.freeMemory())/(1024f*1024f), ((float)edenBean.getUsage().getUsed())/(1024f*1024f), ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f));
 			if(!formatted.equals(lastFormatted)){
 				System.out.println(formatted);
 			}
 			lastFormatted = formatted;
 			acceptedLast = totalAccepted.get();
+			clientToBackendLast = globalClientReadBytes.get();
 			backendToClientLast = globalClientWriteBytes.get();
 			start = System.currentTimeMillis();
 		}
