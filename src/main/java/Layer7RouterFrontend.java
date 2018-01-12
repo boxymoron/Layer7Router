@@ -106,6 +106,7 @@ public final class Layer7RouterFrontend {
 							} catch (IOException e) {
 								e.printStackTrace();
 							}
+							c.suspendWrites();
 						});
 						channel.getSourceChannel().setReadListener(c->{
 							try {
