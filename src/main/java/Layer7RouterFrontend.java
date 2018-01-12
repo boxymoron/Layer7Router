@@ -86,7 +86,7 @@ public final class Layer7RouterFrontend {
 		for(int ip=routerOptions.client_start_ip; ip<=routerOptions.client_end_ip;ip++) {
 			for(int port=0; port<40000;port++) {
 				final InetSocketAddress clientAddr = new InetSocketAddress("192.168.1."+ip, 0);
-				//System.out.println(addr+" Connecting to "+backendAddr);
+				//System.out.println(clientAddr.getAddress().getHostAddress()+":"+clientAddr.getPort()+" Connecting to "+backendAddr);
 				final IoFuture<StreamConnection> future = worker.openStreamConnection(clientAddr, backendAddr, new ChannelListener<StreamConnection> () {
 					@Override
 					public void handleEvent(StreamConnection channel) {
@@ -127,7 +127,6 @@ public final class Layer7RouterFrontend {
 							//System.out.println("bound");
 						}
 					}, xnioOptions);
-				future.await();
 				futures.push(future);
 				//Thread.sleep(1000);
 			}
