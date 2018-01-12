@@ -16,8 +16,10 @@ import org.apache.log4j.MDC;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 import org.xnio.ByteBufferPool;
+import org.xnio.ByteBufferSlicePool;
 import org.xnio.ChannelListener;
 import org.xnio.OptionMap;
+import org.xnio.Pooled;
 import org.xnio.StreamConnection;
 import org.xnio.Xnio;
 import org.xnio.XnioWorker;
@@ -54,8 +56,8 @@ public final class Layer7RouterBackend {
 	final static AtomicLong globalClientWriteBytes = new AtomicLong();
 	final static AtomicLong globalClientReadBytes = new AtomicLong();
 
-	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
-	final static ByteBufferPool pool = ByteBufferPool.SMALL_DIRECT;
+	static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*4, 1024*4 * 1024*1024);
+	//final static ByteBufferPool pool = ByteBufferPool.SMALL_DIRECT;
 	
 	final static Options routerOptions = new Options();
 	
@@ -173,7 +175,8 @@ public final class Layer7RouterBackend {
 		private final static Logger log = Logger.getLogger(FrontendReadListener.class);
 		
 		private long lastActivity = System.currentTimeMillis();
-		private final ByteBuffer buffer = pool.allocate();
+		private final Pooled<ByteBuffer> bufferwrapper = pool.allocate();
+		private final ByteBuffer buffer = bufferwrapper.getResource();
 
 		private volatile boolean initHeaders=true;
 		private volatile boolean writeHeaders=false;
@@ -274,8 +277,8 @@ public final class Layer7RouterBackend {
 			}catch(IOException e1){
 				log.error("", e1);
 			}finally{
-
-				ByteBufferPool.free(buffer);
+				bufferwrapper.free();
+				//ByteBufferPool.free(buffer);
 
 				if(isInfo){
 					String backendAddr = "";
