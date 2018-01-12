@@ -16,10 +16,9 @@ import org.apache.log4j.MDC;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 import org.xnio.ByteBufferPool;
-import org.xnio.ByteBufferSlicePool;
 import org.xnio.ChannelListener;
+import org.xnio.CustomByteBufferPool;
 import org.xnio.OptionMap;
-import org.xnio.Pooled;
 import org.xnio.StreamConnection;
 import org.xnio.Xnio;
 import org.xnio.XnioWorker;
@@ -39,8 +38,8 @@ public final class Layer7RouterBackend {
 	final static Xnio xnio = Xnio.getInstance();
 	final static OptionMap xnioOptions = OptionMap.builder()
 			.set(org.xnio.Options.ALLOW_BLOCKING, false)
-			.set(org.xnio.Options.RECEIVE_BUFFER, 512)
-			.set(org.xnio.Options.SEND_BUFFER, 512)
+			.set(org.xnio.Options.RECEIVE_BUFFER, 1024*4)
+			.set(org.xnio.Options.SEND_BUFFER, 1024*4)
 			//.set(org.xnio.Options.READ_TIMEOUT, 30000)
 			//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
 			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
@@ -56,8 +55,8 @@ public final class Layer7RouterBackend {
 	final static AtomicLong globalClientWriteBytes = new AtomicLong();
 	final static AtomicLong globalClientReadBytes = new AtomicLong();
 
-	static ByteBufferSlicePool pool = new ByteBufferSlicePool(512, Integer.MAX_VALUE);
-	//final static ByteBufferPool pool = ByteBufferPool.SMALL_DIRECT;
+	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
+	final static ByteBufferPool pool = CustomByteBufferPool.allocatePool(4096);
 	
 	final static Options routerOptions = new Options();
 	
@@ -175,8 +174,7 @@ public final class Layer7RouterBackend {
 		private final static Logger log = Logger.getLogger(FrontendReadListener.class);
 		
 		private long lastActivity = System.currentTimeMillis();
-		private final Pooled<ByteBuffer> bufferwrapper = pool.allocate();
-		private final ByteBuffer buffer = bufferwrapper.getResource();
+		private final ByteBuffer buffer = pool.allocate();
 
 		private volatile boolean initHeaders=true;
 		private volatile boolean writeHeaders=false;
@@ -277,8 +275,8 @@ public final class Layer7RouterBackend {
 			}catch(IOException e1){
 				log.error("", e1);
 			}finally{
-				bufferwrapper.free();
-				//ByteBufferPool.free(buffer);
+
+				ByteBufferPool.free(buffer);
 
 				if(isInfo){
 					String backendAddr = "";

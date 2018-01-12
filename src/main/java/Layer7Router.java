@@ -19,12 +19,11 @@ import org.apache.log4j.MDC;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 import org.xnio.ByteBufferPool;
-import org.xnio.ByteBufferSlicePool;
 import org.xnio.ChannelListener;
+import org.xnio.CustomByteBufferPool;
 import org.xnio.IoFuture;
 import org.xnio.IoFuture.Status;
 import org.xnio.OptionMap;
-import org.xnio.Pooled;
 import org.xnio.StreamConnection;
 import org.xnio.Xnio;
 import org.xnio.XnioWorker;
@@ -44,8 +43,8 @@ public final class Layer7Router {
 	final static Xnio xnio = Xnio.getInstance();
 	final static OptionMap xnioOptions = OptionMap.builder()
 			.set(org.xnio.Options.ALLOW_BLOCKING, false)
-			.set(org.xnio.Options.RECEIVE_BUFFER, 512)
-			.set(org.xnio.Options.SEND_BUFFER, 512)
+			.set(org.xnio.Options.RECEIVE_BUFFER, 1024*4)
+			.set(org.xnio.Options.SEND_BUFFER, 1024*4)
 			//.set(org.xnio.Options.READ_TIMEOUT, 30000)
 			//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
 			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
@@ -63,9 +62,9 @@ public final class Layer7Router {
 	final static AtomicLong globalBackendReadBytes = new AtomicLong();
 	final static AtomicLong globalClientReadBytes = new AtomicLong();
 
-	static ByteBufferSlicePool pool = new ByteBufferSlicePool(512, Integer.MAX_VALUE);//4GB
-	//final static ByteBufferPool pool = ByteBufferPool.SMALL_DIRECT;
-
+	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
+	final static ByteBufferPool pool = CustomByteBufferPool.allocatePool(4096);
+	
 	final static Options routerOptions = new Options();
 	
 	final static boolean isInfo=log.isInfoEnabled();
@@ -192,7 +191,7 @@ public final class Layer7Router {
 		private final static Logger log = Logger.getLogger(FrontendReadListener.class);
 		
 		private long lastActivity = System.currentTimeMillis();
-		private final Pooled<ByteBuffer> buffer = pool.allocate();
+		private final ByteBuffer buffer = pool.allocate();
 
 		private volatile boolean initHeaders=true;
 		private volatile boolean writeHeaders=false;
@@ -209,7 +208,7 @@ public final class Layer7Router {
 		private long totalReadsFromFrontend=0;
 
 		private FrontendReadListener(){
-			buffer.getResource().clear();
+			buffer.clear();
 		}
 		
 		@Override
@@ -229,12 +228,12 @@ public final class Layer7Router {
 			try {
 				long clientReadBytes=0;
 				try{
-					if(!initHeaders && buffer.getResource().hasRemaining() && !writeSSLHeadersFromClient){
+					if(!initHeaders && buffer.hasRemaining() && !writeSSLHeadersFromClient){
 						return;//the buffer still has stuff to write
 					}
 
-					buffer.getResource().clear();
-					clientReadBytes = frontendChannel.read(buffer.getResource());
+					buffer.clear();
+					clientReadBytes = frontendChannel.read(buffer);
 					if(clientReadBytes == -1){
 						if(isDebug)log.debug("Client End of stream.");
 						closeAll();
@@ -242,7 +241,7 @@ public final class Layer7Router {
 					}
 					
 					globalClientReadBytes.addAndGet(clientReadBytes);
-					buffer.getResource().flip();
+					buffer.flip();
 					if(isDebug){
 						totalReadsFromFrontend += clientReadBytes;
 						log.debug(buffer.toString());
@@ -251,7 +250,7 @@ public final class Layer7Router {
 					if(initHeaders){
 						if(isDebug)log.debug("Suspending reads on frontend (source)");
 						frontendChannel.suspendReads();
-						initHeaders(frontendChannel, buffer.getResource());
+						initHeaders(frontendChannel, buffer);
 					}else if(future != null){
 						if(writeSSLHeadersFromClient){
 							writeSSLHeadersFromClient=false;
@@ -471,11 +470,9 @@ public final class Layer7Router {
 				} catch (CancellationException | IOException e1) {
 					log.error("", e1);
 				}finally{
-					//ByteBufferPool.free(buffer.getResource());
-					buffer.free();
+					ByteBufferPool.free(buffer);
 					if(writeListener.backendReadListener != null){
-						//ByteBufferPool.free(writeListener.backendReadListener.buffer);
-						writeListener.backendReadListener.buffer.free();
+						ByteBufferPool.free(writeListener.backendReadListener.buffer);
 					}
 				}
 			}
@@ -521,11 +518,11 @@ public final class Layer7Router {
 	}
 	
 	private final static class BackendReadListener implements ChannelListener<ConduitStreamSourceChannel>{
-		private final Pooled<ByteBuffer> buffer = pool.allocate();
+		private final ByteBuffer buffer = pool.allocate();
 		private final FrontendReadListener frontendReadListener;
 		
 		public BackendReadListener(FrontendReadListener frontendReadListener){
-			buffer.getResource().clear();
+			buffer.clear();
 			this.frontendReadListener = frontendReadListener;
 			frontendReadListener.writeListener.backendReadListener = this;
 		}
@@ -535,14 +532,14 @@ public final class Layer7Router {
 			channel.suspendReads();
 			if(isInfo)MDC.put("channel", frontendReadListener.streamConnection.hashCode());
 			try{
-				buffer.getResource().clear();
-				int res = channel.read(buffer.getResource());
+				buffer.clear();
+				int res = channel.read(buffer);
 				if(res == -1){
 					if(isDebug)log.debug("Backend End of stream.");
 					frontendReadListener.closeAll();
 					return;
 				}
-				buffer.getResource().flip();
+				buffer.flip();
 
 				if(isDebug)log.debug("Read "+res+" bytes from Backend (source)");
 				frontendReadListener.totalReadsFromBackend += res;
@@ -579,12 +576,12 @@ public final class Layer7Router {
 			frontendReadListener.streamConnection.getSourceChannel().suspendReads();
 			try {
 				if(!frontendReadListener.initHeaders && frontendReadListener.writeHeaders){
-					writeHeaders(frontendReadListener.buffer.getResource());
+					writeHeaders(frontendReadListener.buffer);
 					if(isDebug)log.debug("Resuming writes on Backend (sink)");
 					frontendReadListener.future.get().getSinkChannel().resumeWrites();
 					return;
 				}
-				writeBody(frontendReadListener.buffer.getResource(), backendSink);
+				writeBody(frontendReadListener.buffer, backendSink);
 			} catch (IOException e) {
 				frontendReadListener.closeAll();
 				return;
@@ -740,13 +737,13 @@ public final class Layer7Router {
 					return;
 				}
 				readListener.future.get().getSourceChannel().suspendReads();
-				int remaining = backendReadListener.buffer.getResource().remaining();
+				int remaining = backendReadListener.buffer.remaining();
 				if(remaining == 0){
 					readListener.future.get().getSourceChannel().resumeReads();
 					return;
 				}
 				try{
-					long count = channel.write(backendReadListener.buffer.getResource());
+					long count = channel.write(backendReadListener.buffer);
 					boolean flushed = channel.flush();
 					if(isDebug)log.debug("Wrote "+count+" bytes from backend to client (flushed: "+flushed+")");
 					readListener.totalWritesToFrontend += count;
