@@ -308,6 +308,7 @@ public final class Layer7RouterBackend {
 	private final static class FrontendWriteListener implements ChannelListener<ConduitStreamSinkChannel> {
 		private final FrontendReadListener readListener;
 
+		private boolean init=true;
 		public FrontendWriteListener(FrontendReadListener readListener){
 			this.readListener = readListener;
 		}
@@ -330,6 +331,13 @@ public final class Layer7RouterBackend {
 			}
 			channel.suspendWrites();
 			try {
+				if(init) {
+					final String PROXY_HEADER = "HTTP/1.1 200 OK\r\n\r\n";
+					final ByteBuffer okBuff = ByteBuffer.allocate(PROXY_HEADER.getBytes().length);
+					okBuff.put(PROXY_HEADER.getBytes());
+					okBuff.flip();
+					channel.write(okBuff);
+				}
 				int remaining = readListener.buffer.remaining();
 				if(remaining == 0){
 					return;
