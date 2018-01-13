@@ -80,6 +80,8 @@ public final class Layer7RouterFrontend {
 	final static boolean isInfo=log.isInfoEnabled();
 	final static boolean isDebug=log.isDebugEnabled();
 	final static boolean isTrace=log.isTraceEnabled();
+	
+	final static Deque<IoFuture<StreamConnection>> futures = new ConcurrentLinkedDeque<>();
 
 	public static void main(String[] args) throws Exception {
 		final CmdLineParser cmdLineParser = new CmdLineParser(routerOptions);
@@ -87,6 +89,37 @@ public final class Layer7RouterFrontend {
 		System.out.println(routerOptions.toString());
 
 		worker = xnio.createWorker(xnioOptions);
+		
+		final Thread reaper = new Thread(new Runnable() {
+			@Override
+			public void run() {
+				while(true) {
+					try {
+						Thread.sleep(500);
+						final Iterator<IoFuture<StreamConnection>> iter = futures.iterator();
+						while(iter.hasNext()) {
+							final IoFuture<StreamConnection> fut = iter.next();
+							if(IoFuture.Status.CANCELLED.equals(fut.getStatus()) || IoFuture.Status.FAILED.equals(fut.getStatus())) {
+								sessionsCount.decrementAndGet();
+								iter.remove();
+								continue;
+							}else if(IoFuture.Status.DONE.equals(fut.getStatus())) {
+								if(!fut.get().isOpen() || !fut.get().getSinkChannel().isOpen() || !fut.get().getSourceChannel().isOpen()) {
+									sessionsCount.decrementAndGet();
+									iter.remove();
+									continue;
+								}
+							}
+						}
+					}catch(Exception e) {
+						e.printStackTrace();
+					}
+				}
+			}
+		});
+		
+		reaper.setName("Idle Connection Reaper");
+		reaper.start();
 		
 		ForkJoinPool.commonPool().execute(()->{
 			run();
@@ -145,7 +178,7 @@ public final class Layer7RouterFrontend {
 
 	private static void run() {
 		final AtomicInteger connections= new AtomicInteger();
-		final Deque<IoFuture<StreamConnection>> futures = new ConcurrentLinkedDeque<>();
+		
 		final InetSocketAddress backendAddr = new InetSocketAddress(routerOptions.backend_host, routerOptions.backend_port);
 		for(int ip=routerOptions.client_start_ip; ip<routerOptions.client_end_ip;ip++) {
 			for(int port=0; port<40000;port++) {
