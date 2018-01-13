@@ -72,7 +72,7 @@ public final class Layer7Router {
 	final static boolean isDebug=log.isDebugEnabled();
 	final static boolean isTrace=log.isTraceEnabled();
 	
-	static InetSocketAddress[] bindAddresses = new InetSocketAddress[20];
+	static InetSocketAddress[] bindAddresses = new InetSocketAddress[10];
 
 	public static void main(String[] args) throws Exception {
 		final CmdLineParser cmdLineParser = new CmdLineParser(routerOptions);

@@ -147,7 +147,7 @@ public final class Layer7RouterFrontend {
 		final AtomicInteger connections= new AtomicInteger();
 		final Deque<IoFuture<StreamConnection>> futures = new ConcurrentLinkedDeque<>();
 		final InetSocketAddress backendAddr = new InetSocketAddress(routerOptions.backend_host, routerOptions.backend_port);
-		for(int ip=routerOptions.client_start_ip; ip<=routerOptions.client_end_ip;ip++) {
+		for(int ip=routerOptions.client_start_ip; ip<routerOptions.client_end_ip;ip++) {
 			for(int port=0; port<40000;port++) {
 				final InetSocketAddress clientAddr = new InetSocketAddress("192.168.1."+ip, 0);
 				//System.out.println(clientAddr.getAddress().getHostAddress()+":"+clientAddr.getPort()+" Connecting to "+backendAddr);
@@ -219,7 +219,7 @@ public final class Layer7RouterFrontend {
 		public Integer client_start_ip = 225;
 		
 		@Option(name = "-client_end_ip", usage="port")
-		public Integer client_end_ip = 255;
+		public Integer client_end_ip = 235;
 
 		@Override
 		public String toString() {
