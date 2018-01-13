@@ -28,6 +28,7 @@ import org.xnio.StreamConnection;
 import org.xnio.Xnio;
 import org.xnio.XnioWorker;
 import org.xnio.channels.AcceptingChannel;
+import org.xnio.channels.BoundChannel;
 import org.xnio.conduits.ConduitStreamSinkChannel;
 import org.xnio.conduits.ConduitStreamSourceChannel;
 
@@ -70,6 +71,8 @@ public final class Layer7Router {
 	final static boolean isInfo=log.isInfoEnabled();
 	final static boolean isDebug=log.isDebugEnabled();
 	final static boolean isTrace=log.isTraceEnabled();
+	
+	static InetSocketAddress[] bindAddresses = new InetSocketAddress[20];
 
 	public static void main(String[] args) throws Exception {
 		final CmdLineParser cmdLineParser = new CmdLineParser(routerOptions);
@@ -78,6 +81,10 @@ public final class Layer7Router {
 
 		worker = xnio.createWorker(xnioOptions);
 		
+		for(int octet=245, i=0;octet<255;octet++, i++) {
+			final InetSocketAddress clientAddr = new InetSocketAddress("192.168.1."+octet, 0);
+			bindAddresses[i] = clientAddr;
+		}
 		
 		final Deque<FrontendReadListener> readListeners = new ConcurrentLinkedDeque<>();
 
@@ -199,9 +206,9 @@ public final class Layer7Router {
 		private volatile boolean writeSSLHeadersFromClient=false;
 
 		private volatile boolean allClosed=false;
-		private IoFuture<StreamConnection> future;
-		private StreamConnection streamConnection;
+		private volatile IoFuture<StreamConnection> future;
 		private FrontendWriteListener writeListener;
+		private StreamConnection streamConnection;
 		private long totalWritesToBackend=0;
 		private long totalWritesToFrontend=0;
 		private long totalReadsFromBackend=0;
@@ -416,7 +423,9 @@ public final class Layer7Router {
 				closeAll();
 				return;
 			}
-			future = worker.openStreamConnection(addr, backendConnection -> {
+			//TODO use round-robbin with bindAddress
+			InetSocketAddress clientAddr = bindAddresses[totalAccepted.get() % bindAddresses.length];
+			future = worker.openStreamConnection(clientAddr, addr, backendConnection -> {
 					backendConnection.setCloseListener(backendChannel2 -> {
 						if(isDebug)log.debug("Backend connection closed.");
 						streamConnection.getSinkChannel().resumeWrites();//resume writes to client
@@ -444,7 +453,14 @@ public final class Layer7Router {
 					frontendChannel.resumeReads();
 					backendConnection.getSourceChannel().resumeReads();
 					backendConnection.getSinkChannel().resumeWrites();
-			}, xnioOptions);
+			}, new ChannelListener<BoundChannel>() {
+				@Override
+				public void handleEvent(BoundChannel channel) {
+					//System.out.println("bound");
+				}
+			},
+			xnioOptions);
+			
 			initHeaders=false;
 			writeHeaders=true;
 		}
