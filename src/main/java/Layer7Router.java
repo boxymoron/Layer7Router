@@ -405,7 +405,7 @@ public final class Layer7Router {
 			}
 			
 			//if("127.0.0.1".equals(host) || "localhost".equals(host) || "192.168.1.133".equals(host) || "192.168.1.150".equals(host) || "192.168.1.218".equals(host)){
-			if("127.0.0.1".equals(host) || "192.168.1.218".equals(host)){
+			if("127.0.0.1".equals(host) || "192.168.1.218".equals(host) || "192.168.1.150".equals(host)){
 				host = routerOptions.backend_host;
 				port = routerOptions.backend_port;
 			}
