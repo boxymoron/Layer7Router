@@ -125,7 +125,7 @@ public final class Layer7Router {
 			public void run(){
 				while(true){
 					try{
-						Thread.sleep(2000);
+						Thread.sleep(500);
 						final Iterator<FrontendReadListener> iter = readListeners.iterator();
 						while(iter.hasNext()){
 							FrontendReadListener listener = iter.next();
