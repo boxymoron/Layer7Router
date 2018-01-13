@@ -244,6 +244,7 @@ public final class Layer7RouterBackend {
 					
 					globalClientReadBytes.addAndGet(clientReadBytes);
 					buffer.flip();
+					writeListener.init=true;
 					this.streamConnection.getSinkChannel().resumeWrites();
 					if(isDebug){
 						totalReadsFromFrontend += clientReadBytes;
@@ -334,6 +335,7 @@ public final class Layer7RouterBackend {
 		private final FrontendReadListener readListener;
 
 		private boolean init=true;
+
 		public FrontendWriteListener(FrontendReadListener readListener){
 			this.readListener = readListener;
 		}
@@ -357,13 +359,7 @@ public final class Layer7RouterBackend {
 			channel.suspendWrites();
 			try {
 				if(init) {
-					final String ok_header = "HTTP/1.1 200 OK\r\n\r\n";
-					final ByteBuffer okBuff = ByteBuffer.allocate(ok_header.getBytes().length);
-					okBuff.put(ok_header.getBytes());
-					okBuff.flip();
-					int count = channel.write(okBuff);
-					boolean flushed = channel.flush();
-					globalClientWriteBytes.addAndGet(count);
+					writeOKHeader(channel);
 				}
 				int remaining = readListener.buffer.remaining();
 				if(remaining == 0){
@@ -380,6 +376,7 @@ public final class Layer7RouterBackend {
 						channel.resumeWrites();
 						return;
 					}else {
+						init=false;
 						readListener.streamConnection.getSourceChannel().resumeReads();
 					}
 				}catch(IOException e){
@@ -397,6 +394,16 @@ public final class Layer7RouterBackend {
 				//channel.suspendWrites();
 			}
 			
+		}
+
+		private void writeOKHeader(final ConduitStreamSinkChannel channel) throws IOException {
+			final String ok_header = "HTTP/1.1 200 OK\r\n\r\n";
+			final ByteBuffer okBuff = ByteBuffer.allocate(ok_header.getBytes().length);
+			okBuff.put(ok_header.getBytes());
+			okBuff.flip();
+			int count = channel.write(okBuff);
+			boolean flushed = channel.flush();
+			globalClientWriteBytes.addAndGet(count);
 		}
 	}
 	
