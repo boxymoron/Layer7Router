@@ -397,7 +397,7 @@ public final class Layer7RouterBackend {
 		}
 
 		private void writeOKHeader(final ConduitStreamSinkChannel channel) throws IOException {
-			final String ok_header = "HTTP/1.1 200 OK\r\n\r\n";
+			final String ok_header = "HTTP/1.1 200 OK\r\nContent-Length: "+readListener.buffer.remaining()+"\r\n\r\n";
 			final ByteBuffer okBuff = ByteBuffer.allocate(ok_header.getBytes().length);
 			okBuff.put(ok_header.getBytes());
 			okBuff.flip();
