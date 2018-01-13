@@ -222,7 +222,7 @@ public final class Layer7RouterFrontend {
 							}
 						});
 						channel.setCloseListener(c->{
-							sessionsCount.decrementAndGet();
+							
 						});
 						channel.getSinkChannel().resumeWrites();
 						channel.getSourceChannel().resumeReads();
