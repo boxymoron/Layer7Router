@@ -181,7 +181,12 @@ public final class Layer7RouterFrontend {
 		
 		final InetSocketAddress backendAddr = new InetSocketAddress(routerOptions.backend_host, routerOptions.backend_port);
 		for(int ip=routerOptions.client_start_ip; ip<routerOptions.client_end_ip;ip++) {
-			for(int port=0; port<40000;port++) {
+			for(int port=0; port<20000;port++) {
+				try{
+					Thread.sleep(2);
+				}catch(Exception e){
+					e.printStackTrace();
+				}
 				final InetSocketAddress clientAddr = new InetSocketAddress("192.168.1."+ip, 0);
 				//System.out.println(clientAddr.getAddress().getHostAddress()+":"+clientAddr.getPort()+" Connecting to "+backendAddr);
 				final IoFuture<StreamConnection> future = worker.openStreamConnection(clientAddr, backendAddr, new ChannelListener<StreamConnection> () {
