@@ -183,7 +183,7 @@ public final class Layer7RouterFrontend {
 		for(int ip=routerOptions.client_start_ip; ip<routerOptions.client_end_ip;ip++) {
 			for(int port=0; port<20000;port++) {
 				try{
-					Thread.sleep(2);
+					Thread.sleep(1);
 				}catch(Exception e){
 					e.printStackTrace();
 				}
