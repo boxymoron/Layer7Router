@@ -58,7 +58,7 @@ public final class Layer7RouterFrontend {
 			//.set(org.xnio.Options.READ_TIMEOUT, 30000)
 			//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
 			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
-			.set(org.xnio.Options.WORKER_IO_THREADS, 2)
+			.set(org.xnio.Options.WORKER_IO_THREADS, 4)
 			.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
 			.set(org.xnio.Options.BACKLOG, 1024)
 			.set(org.xnio.Options.KEEP_ALIVE, false)
@@ -254,10 +254,10 @@ public final class Layer7RouterFrontend {
 		public Integer backend_port = 80;
 		
 		@Option(name = "-client_start_ip", usage="port")
-		public Integer client_start_ip = 225;
+		public Integer client_start_ip = 80;
 		
 		@Option(name = "-client_end_ip", usage="port")
-		public Integer client_end_ip = 235;
+		public Integer client_end_ip = 120;
 
 		@Override
 		public String toString() {
