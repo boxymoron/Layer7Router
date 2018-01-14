@@ -44,12 +44,12 @@ public final class Layer7Router {
 	final static Xnio xnio = Xnio.getInstance();
 	final static OptionMap xnioOptions = OptionMap.builder()
 			.set(org.xnio.Options.ALLOW_BLOCKING, false)
-			.set(org.xnio.Options.RECEIVE_BUFFER, 1024*4)
-			.set(org.xnio.Options.SEND_BUFFER, 1024*4)
+			.set(org.xnio.Options.RECEIVE_BUFFER, 1024)
+			.set(org.xnio.Options.SEND_BUFFER, 1024)
 			//.set(org.xnio.Options.READ_TIMEOUT, 30000)
 			//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
 			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
-			.set(org.xnio.Options.WORKER_IO_THREADS, 2)
+			.set(org.xnio.Options.WORKER_IO_THREADS, 4)
 			.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
 			.set(org.xnio.Options.BACKLOG, 1024)
 			.set(org.xnio.Options.KEEP_ALIVE, false)
@@ -64,7 +64,7 @@ public final class Layer7Router {
 	final static AtomicLong globalClientReadBytes = new AtomicLong();
 
 	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
-	final static ByteBufferPool pool = CustomByteBufferPool.allocatePool(4096);
+	final static ByteBufferPool pool = CustomByteBufferPool.allocatePool(1024);
 	
 	final static Options routerOptions = new Options();
 	
