@@ -79,7 +79,7 @@ public final class Layer7Router {
 		cmdLineParser.parseArgument(args);
 		System.out.println(routerOptions.toString());
 		
-		bindAddresses = new InetSocketAddress[routerOptions.client_start_ip - routerOptions.client_end_ip];
+		bindAddresses = new InetSocketAddress[routerOptions.client_end_ip - routerOptions.client_start_ip];
 
 		worker = xnio.createWorker(xnioOptions);
 		
