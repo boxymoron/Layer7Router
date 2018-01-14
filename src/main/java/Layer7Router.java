@@ -72,12 +72,14 @@ public final class Layer7Router {
 	final static boolean isDebug=log.isDebugEnabled();
 	final static boolean isTrace=log.isTraceEnabled();
 	
-	static InetSocketAddress[] bindAddresses = new InetSocketAddress[10];
+	static InetSocketAddress[] bindAddresses = new InetSocketAddress[1];
 
 	public static void main(String[] args) throws Exception {
 		final CmdLineParser cmdLineParser = new CmdLineParser(routerOptions);
 		cmdLineParser.parseArgument(args);
 		System.out.println(routerOptions.toString());
+		
+		bindAddresses = new InetSocketAddress[routerOptions.client_start_ip - routerOptions.client_end_ip];
 
 		worker = xnio.createWorker(xnioOptions);
 		
