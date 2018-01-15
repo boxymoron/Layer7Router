@@ -51,7 +51,7 @@ public final class Layer7Router {
 			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
 			.set(org.xnio.Options.WORKER_IO_THREADS, 4)
 			.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
-			.set(org.xnio.Options.BACKLOG, 1024)
+			.set(org.xnio.Options.BACKLOG, 1024*4)
 			.set(org.xnio.Options.KEEP_ALIVE, false)
 			.getMap();
 	static XnioWorker worker;
