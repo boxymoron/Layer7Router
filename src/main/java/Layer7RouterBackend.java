@@ -7,6 +7,7 @@ import java.lang.management.OperatingSystemMXBean;
 import java.lang.management.ThreadMXBean;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Deque;
@@ -52,7 +53,7 @@ public final class Layer7RouterBackend {
 			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
 			.set(org.xnio.Options.WORKER_IO_THREADS, 4)
 			.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
-			.set(org.xnio.Options.BACKLOG, 1024)
+			.set(org.xnio.Options.BACKLOG, 1024*4)
 			.set(org.xnio.Options.KEEP_ALIVE, false)
 			.getMap();
 	static XnioWorker worker;
@@ -241,10 +242,9 @@ public final class Layer7RouterBackend {
 						closeAll();
 						return;
 					}
-					
 					globalClientReadBytes.addAndGet(clientReadBytes);
-					buffer.flip();
-					writeListener.init=true;
+					buffer.flip();					
+					
 					this.streamConnection.getSinkChannel().resumeWrites();
 					if(isDebug){
 						totalReadsFromFrontend += clientReadBytes;
@@ -328,13 +328,12 @@ public final class Layer7RouterBackend {
 			return builder.toString();
 		}
 	}
-	
-	
 
 	private final static class FrontendWriteListener implements ChannelListener<ConduitStreamSinkChannel> {
 		private final FrontendReadListener readListener;
 
-		private boolean init=true;
+		private boolean writeHeader=true;
+		private boolean writeBody=false;
 
 		public FrontendWriteListener(FrontendReadListener readListener){
 			this.readListener = readListener;
@@ -358,7 +357,7 @@ public final class Layer7RouterBackend {
 			}
 			channel.suspendWrites();
 			try {
-				if(init) {
+				if(writeHeader) {
 					writeOKHeader(channel);
 				}
 				int remaining = readListener.buffer.remaining();
@@ -369,14 +368,14 @@ public final class Layer7RouterBackend {
 				try{
 					long count = channel.write(readListener.buffer);
 					boolean flushed = channel.flush();
-					if(isDebug)log.debug("Wrote "+count+" bytes from backend to client (flushed: "+flushed+")");
+					if(isDebug)log.debug("Wrote "+count+" body bytes from backend to client (flushed: "+flushed+")");
 					readListener.totalWritesToFrontend += count;
 					globalClientWriteBytes.addAndGet(count);
 					if(count != remaining){
 						channel.resumeWrites();
 						return;
 					}else {
-						init=false;
+						
 						readListener.streamConnection.getSourceChannel().resumeReads();
 					}
 				}catch(IOException e){
@@ -397,13 +396,37 @@ public final class Layer7RouterBackend {
 		}
 
 		private void writeOKHeader(final ConduitStreamSinkChannel channel) throws IOException {
-			final String ok_header = "HTTP/1.1 200 OK\r\nContent-Length: "+readListener.buffer.remaining()+"\r\n\r\n";
-			final ByteBuffer okBuff = ByteBuffer.allocate(ok_header.getBytes().length);
-			okBuff.put(ok_header.getBytes());
-			okBuff.flip();
-			int count = channel.write(okBuff);
-			boolean flushed = channel.flush();
-			globalClientWriteBytes.addAndGet(count);
+			int pos = readListener.buffer.position();
+			final String content = StandardCharsets.UTF_8.decode(readListener.buffer).toString();
+			if(log.isDebugEnabled())log.debug(content);
+			final String[] lines = content.toString().split("\r\n");
+			if(lines.length > 0) {
+				for(String line: lines){
+					String[] header = line.split(":");
+					if(header.length == 2) {
+						if("Content-Length".equals(header[0])) {
+							int contentLength = Integer.parseInt(header[1].trim());
+							final String ok_header = "HTTP/1.1 200 OK\r\nContent-Length: "+contentLength+"\r\n\r\n";
+							final ByteBuffer okBuff = ByteBuffer.allocate(ok_header.getBytes().length);
+							okBuff.put(ok_header.getBytes());
+							okBuff.flip();
+							int count = channel.write(okBuff);
+							boolean flushed = channel.flush();
+							if(isDebug)log.debug("Wrote "+count+" header bytes from backend to client (flushed: "+flushed+")");
+							globalClientWriteBytes.addAndGet(count);
+							String body = content.substring(content.indexOf(line)+line.length()+5);
+							readListener.buffer.clear();
+							readListener.buffer.put(body.getBytes());
+							readListener.buffer.flip();
+							writeBody=true;
+							writeHeader=false;
+						}
+					}
+				}
+			}else {
+				readListener.buffer.position(pos);
+				readListener.buffer.compact();
+			}
 		}
 	}
 	
