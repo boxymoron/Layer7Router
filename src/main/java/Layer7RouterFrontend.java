@@ -182,10 +182,12 @@ public final class Layer7RouterFrontend {
 		final InetSocketAddress backendAddr = new InetSocketAddress(routerOptions.backend_host, routerOptions.backend_port);
 		for(int ip=routerOptions.client_start_ip; ip<routerOptions.client_end_ip;ip++) {
 			for(int port=0; port<20000;port++) {
-				try{
-					Thread.sleep(2);
-				}catch(Exception e){
-					e.printStackTrace();
+				if(routerOptions.sleep_ms != null) {
+					try{
+						Thread.sleep(routerOptions.sleep_ms);
+					}catch(Exception e){
+						e.printStackTrace();
+					}
 				}
 				final InetSocketAddress clientAddr = new InetSocketAddress("192.168.1."+ip, 0);
 				//System.out.println(clientAddr.getAddress().getHostAddress()+":"+clientAddr.getPort()+" Connecting to "+backendAddr);
@@ -247,17 +249,20 @@ public final class Layer7RouterFrontend {
 		@Option(name = "-listen_port", usage="port")
 		public Integer listen_port = 7080;
 		
-		@Option(name = "-backend_host", usage="host")
+		@Option(name = "-backend_host", usage="ip address")
 		public String backend_host = "192.168.1.150";
 		
 		@Option(name = "-backend_port", usage="port")
 		public Integer backend_port = 80;
 		
-		@Option(name = "-client_start_ip", usage="port")
+		@Option(name = "-client_start_ip", usage="ip address")
 		public Integer client_start_ip = 80;
 		
-		@Option(name = "-client_end_ip", usage="port")
+		@Option(name = "-client_end_ip", usage="ip address")
 		public Integer client_end_ip = 120;
+		
+		@Option(name = "-sleep_ms", usage="sleep ms")
+		public Integer sleep_ms = null;
 
 		@Override
 		public String toString() {
