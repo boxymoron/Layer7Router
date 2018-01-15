@@ -14,6 +14,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -188,6 +190,7 @@ public final class Layer7RouterFrontend {
 		final String req = sb.toString();
 		//if(log.isDebugEnabled())log.debug("req: "+req.length()+":\n"+req);
 		final InetSocketAddress backendAddr = new InetSocketAddress(routerOptions.backend_host, routerOptions.backend_port);
+		CountDownLatch latch = new CountDownLatch((routerOptions.client_end_ip-routerOptions.client_start_ip) * routerOptions.connections_per_ip);
 		for(int ip=routerOptions.client_start_ip; ip<=routerOptions.client_end_ip;ip++) {
 			for(int port=0; port<routerOptions.connections_per_ip;port++) {
 				if(routerOptions.sleep_ms != null) {
@@ -206,7 +209,7 @@ public final class Layer7RouterFrontend {
 						connections.incrementAndGet();
 						totalAccepted.incrementAndGet();
 						sessionsCount.incrementAndGet();
-						
+						latch.countDown();
 						
 						//System.out.println("Connections: "+connections.get());
 						//System.out.println(addr+" Connected to "+backendAddr);
@@ -310,8 +313,6 @@ public final class Layer7RouterFrontend {
 						channel.setCloseListener(c->{
 							
 						});
-						channel.getSinkChannel().resumeWrites();
-						channel.getSourceChannel().resumeReads();
 					}}, new ChannelListener<BoundChannel>() {
 						@Override
 						public void handleEvent(BoundChannel channel) {
@@ -321,6 +322,11 @@ public final class Layer7RouterFrontend {
 				futures.push(future);
 				//Thread.sleep(1000);
 			}
+		}
+		try {
+			latch.await();
+		} catch (InterruptedException e1) {
+			e1.printStackTrace();
 		}
 		final Iterator<IoFuture<StreamConnection>> iter = futures.iterator();
 		while(true) {
