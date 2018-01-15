@@ -307,11 +307,16 @@ public final class Layer7RouterFrontend {
 
 								} catch (IOException e) {
 									e.printStackTrace();
+									try {
+										channel.close();
+									} catch (IOException e1) {
+										e1.printStackTrace();
+									}
 								}
 							}
 						});
 						channel.setCloseListener(c->{
-							
+							sessionsCount.decrementAndGet();
 						});
 					}}, new ChannelListener<BoundChannel>() {
 						@Override
