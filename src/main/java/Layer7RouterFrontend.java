@@ -339,11 +339,16 @@ public final class Layer7RouterFrontend {
 				final IoFuture<StreamConnection> fut = iter.next();
 				if(IoFuture.Status.DONE.equals(fut.getStatus())){
 					try {
+						if(routerOptions.sleep_ms != null) {
+							Thread.sleep(routerOptions.sleep_ms);
+						}
 						fut.get().getSinkChannel().resumeWrites();
 						iter.remove();
 					} catch (CancellationException e) {
 						e.printStackTrace();
 					} catch (IOException e) {
+						e.printStackTrace();
+					} catch (InterruptedException e) {
 						e.printStackTrace();
 					}
 				}
