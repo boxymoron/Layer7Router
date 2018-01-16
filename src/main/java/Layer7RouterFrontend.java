@@ -198,13 +198,13 @@ public final class Layer7RouterFrontend {
 		CountDownLatch latch = new CountDownLatch(total_conns);
 		for(int ip=routerOptions.client_start_ip; ip<=routerOptions.client_end_ip;ip++) {
 			for(int port=0; port<routerOptions.connections_per_ip;port++) {
-				if(routerOptions.sleep_ms != null) {
+/*				if(routerOptions.sleep_ms != null) {
 					try{
 						Thread.sleep(routerOptions.sleep_ms);
 					}catch(Exception e){
 						e.printStackTrace();
 					}
-				}
+				}*/
 				
 				final InetSocketAddress clientAddr = new InetSocketAddress("192.168.1."+ip, 0);
 				//System.out.println(clientAddr.getAddress().getHostAddress()+":"+clientAddr.getPort()+" Connecting to "+backendAddr);
@@ -382,6 +382,9 @@ public final class Layer7RouterFrontend {
 				final IoFuture<StreamConnection> fut = iter.next();
 				if(IoFuture.Status.DONE.equals(fut.getStatus())){
 					try {
+						if(routerOptions.sleep_ms != null) {
+							Thread.sleep(routerOptions.sleep_ms);
+						}
 						if(((double)count++) % r < 1d) {
 							fut.get().getSinkChannel().resumeWrites();
 						}else {
@@ -391,6 +394,8 @@ public final class Layer7RouterFrontend {
 					} catch (CancellationException e) {
 						e.printStackTrace();
 					} catch (IOException e) {
+						e.printStackTrace();
+					} catch (InterruptedException e) {
 						e.printStackTrace();
 					}
 				}
