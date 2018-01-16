@@ -12,6 +12,7 @@ import java.util.Deque;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ForkJoinPool;
@@ -60,11 +61,15 @@ public final class Layer7RouterFrontend {
 	
 	final static AtomicInteger totalAccepted = new AtomicInteger();
 	final static AtomicInteger sessionsCount = new AtomicInteger();
+	final static AtomicInteger sessionsActive = new AtomicInteger();
 
 	final static AtomicLong globalClientWriteReq = new AtomicLong();
 	final static AtomicLong globalClientWriteBytes = new AtomicLong();
 	final static AtomicLong globalClientWriteRes = new AtomicLong();
 	final static AtomicLong globalBackendReadBytes = new AtomicLong();
+
+	
+	final static AtomicInteger globalReqPerSec = new AtomicInteger();
 
 
 	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
@@ -143,6 +148,7 @@ public final class Layer7RouterFrontend {
 			
 			double acceptedPerSec = ((double)totalAccepted.get() - (double)acceptedLast) / ((double)slept/1000d);
 			double reqPerSec = ((double)globalClientWriteReq.get() - (double)reqLast) / ((double)slept/1000d);
+			globalReqPerSec.set((int)((globalReqPerSec.get() * (1 - routerOptions.damping_factor)) + (reqPerSec * routerOptions.damping_factor)));
 			
 			double clientToBackendPerSec = (globalClientWriteBytes.get() - clientToBackendLast) / ((double)slept/1000d);
 			String clientToBackendPerSecUnits = "KB";
@@ -161,8 +167,8 @@ public final class Layer7RouterFrontend {
 			}else {
 				backendToClientPerSec = backendToClientPerSec / 1024f;
 			}
-			final String formatted = String.format("Sess: %,.1f per/sec, %,d total, %,d curr, %,d req, %,.1f req/sec, %,d res, %,d FW, %,d BR, out %,.1f %s/sec, in %,.1f %s/sec, Direct %,.1f MB, %s %s", 
-					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), globalClientWriteReq.get(), reqPerSec, globalClientWriteRes.get(), globalClientWriteBytes.get(), globalBackendReadBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f), memoryStats, cpuStats);
+			final String formatted = String.format("Sess: %,.1f per/sec, %,d total, %,d curr, %,d active, %,d req, %,.1f req/sec, %,d res, %,d FW, %,d BR, out %,.1f %s/sec, in %,.1f %s/sec, Direct %,.1f MB, %s %s", 
+					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), sessionsActive.get(), globalClientWriteReq.get(), reqPerSec, globalClientWriteRes.get(), globalClientWriteBytes.get(), globalBackendReadBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f), memoryStats, cpuStats);
 			if(!formatted.equals(lastFormatted)){
 				System.out.println(formatted);
 			}
@@ -188,7 +194,8 @@ public final class Layer7RouterFrontend {
 		final String req = sb.toString();
 		//if(log.isDebugEnabled())log.debug("req: "+req.length()+":\n"+req);
 		final InetSocketAddress backendAddr = new InetSocketAddress(routerOptions.backend_host, routerOptions.backend_port);
-		CountDownLatch latch = new CountDownLatch((routerOptions.client_end_ip-routerOptions.client_start_ip) * routerOptions.connections_per_ip);
+		final int total_conns = (routerOptions.client_end_ip-routerOptions.client_start_ip) * routerOptions.connections_per_ip;
+		CountDownLatch latch = new CountDownLatch(total_conns);
 		for(int ip=routerOptions.client_start_ip; ip<=routerOptions.client_end_ip;ip++) {
 			for(int port=0; port<routerOptions.connections_per_ip;port++) {
 				if(routerOptions.sleep_ms != null) {
@@ -199,7 +206,7 @@ public final class Layer7RouterFrontend {
 					}
 				}
 				
-				final InetSocketAddress clientAddr = new InetSocketAddress("192.168.1."+ip, 0);
+				final InetSocketAddress clientAddr = new InetSocketAddress("10.77.66.139", 0);
 				//System.out.println(clientAddr.getAddress().getHostAddress()+":"+clientAddr.getPort()+" Connecting to "+backendAddr);
 				final IoFuture<StreamConnection> future = worker.openStreamConnection(clientAddr, backendAddr, new ChannelListener<StreamConnection> () {
 					@Override
@@ -240,6 +247,12 @@ public final class Layer7RouterFrontend {
 									
 								} catch (IOException e) {
 									e.printStackTrace();
+									try {
+										channel.close();
+									} catch (IOException e1) {
+										e1.printStackTrace();
+									}
+									
 								}
 							}
 						});
@@ -314,9 +327,8 @@ public final class Layer7RouterFrontend {
 							}
 						});
 						channel.setCloseListener(c->{
-							sessionsCount.decrementAndGet();
+							
 						});
-						channel.getSinkChannel().resumeWrites();
 					}}, new ChannelListener<BoundChannel>() {
 						@Override
 						public void handleEvent(BoundChannel channel) {
@@ -327,37 +339,65 @@ public final class Layer7RouterFrontend {
 				//Thread.sleep(1000);
 			}
 		}
+
 		try {
 			latch.await();
 		} catch (InterruptedException e1) {
 			e1.printStackTrace();
 		}
-		/*final Iterator<IoFuture<StreamConnection>> iter = futures.iterator();
+		
+		regulate();
+	}
+
+	private static void regulate() {
+		int maxReqPerSec = globalReqPerSec.get();
+		int reqPerSecLast = globalReqPerSec.get();//damped avg
+		double max_target_util=routerOptions.target_util;
 		while(true) {
+			try {
+				Thread.sleep(2000);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+			int count=0;
+			if(globalReqPerSec.get() > maxReqPerSec) {
+				maxReqPerSec = globalReqPerSec.get();
+				max_target_util=routerOptions.target_util;
+			}
+			final Iterator<IoFuture<StreamConnection>> iter = futures.iterator();
+			if(globalReqPerSec.get() < max_target_util){
+				routerOptions.target_util = max_target_util;
+			}else if(globalReqPerSec.get() >= reqPerSecLast) {
+				routerOptions.target_util += 0.001d;
+			}else {
+				routerOptions.target_util -= 0.0015d;
+			}
+			if(routerOptions.target_util <= 0.001) {
+				routerOptions.target_util = 0.001;
+			}
+			double currSessionsActive = ((double)sessionsCount.get()) * routerOptions.target_util;
+			sessionsActive.set((int)currSessionsActive);
+			double r = ((double)sessionsCount.get())/currSessionsActive;
 			while(iter.hasNext()) {
 				final IoFuture<StreamConnection> fut = iter.next();
 				if(IoFuture.Status.DONE.equals(fut.getStatus())){
 					try {
-						if(routerOptions.sleep_ms != null) {
-							Thread.sleep(routerOptions.sleep_ms);
+						if(((double)count++) % r < 1d) {
+							fut.get().getSinkChannel().resumeWrites();
+						}else {
+							fut.get().getSinkChannel().suspendWrites();
 						}
-						fut.get().getSinkChannel().resumeWrites();
-						iter.remove();
+						reqPerSecLast = globalReqPerSec.get();
 					} catch (CancellationException e) {
 						e.printStackTrace();
 					} catch (IOException e) {
 						e.printStackTrace();
-					} catch (InterruptedException e) {
-						e.printStackTrace();
 					}
 				}
 			}
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
-		}*/
+			
+			//System.out.println("target_util: "+target_util+" globalReqPerSec:"+globalReqPerSec.get()+" reqPerSecLast: "+reqPerSecLast+" sessionsActive:"+currSessionsActive+" r:"+r);
+		}
 	}
 	
 	private final static class Options {
@@ -384,13 +424,19 @@ public final class Layer7RouterFrontend {
 		
 		@Option(name = "-payload_bytes", usage="payload bytes, use powers of 2, no bigger than 32768 (int)")
 		public Integer payload_bytes = 1024;
+		
+		@Option(name = "-damping_factor", usage="damping factor  (double between 0.01 and 1.0)")
+		public Double damping_factor = 0.1d;
+		
+		@Option(name = "-target_util", usage="target utilization  (double between 0.01 and 1.0)")
+		public Double target_util = 0.1d;
 
 		@Override
 		public String toString() {
 			return "Options [listen_port=" + listen_port + ", backend_host=" + backend_host + ", backend_port="
 					+ backend_port + ", client_start_ip=" + client_start_ip + ", client_end_ip=" + client_end_ip
 					+ ", sleep_ms=" + sleep_ms + ", connections_per_ip=" + connections_per_ip + ", payload_bytes="
-					+ payload_bytes + "]";
+					+ payload_bytes + ", damping_factor=" + damping_factor + "]";
 		}
 	}
 	
