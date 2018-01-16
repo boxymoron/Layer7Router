@@ -193,6 +193,14 @@ public final class Layer7RouterFrontend {
 		CountDownLatch latch = new CountDownLatch((routerOptions.client_end_ip-routerOptions.client_start_ip) * routerOptions.connections_per_ip);
 		for(int ip=routerOptions.client_start_ip; ip<=routerOptions.client_end_ip;ip++) {
 			for(int port=0; port<routerOptions.connections_per_ip;port++) {
+				if(routerOptions.sleep_ms != null) {
+					try{
+						Thread.sleep(routerOptions.sleep_ms);
+					}catch(Exception e){
+						e.printStackTrace();
+					}
+				}
+				
 				final InetSocketAddress clientAddr = new InetSocketAddress("192.168.1."+ip, 0);
 				//System.out.println(clientAddr.getAddress().getHostAddress()+":"+clientAddr.getPort()+" Connecting to "+backendAddr);
 				final IoFuture<StreamConnection> future = worker.openStreamConnection(clientAddr, backendAddr, new ChannelListener<StreamConnection> () {
@@ -310,6 +318,7 @@ public final class Layer7RouterFrontend {
 						channel.setCloseListener(c->{
 							sessionsCount.decrementAndGet();
 						});
+						channel.getSinkChannel().resumeWrites();
 					}}, new ChannelListener<BoundChannel>() {
 						@Override
 						public void handleEvent(BoundChannel channel) {
@@ -325,7 +334,7 @@ public final class Layer7RouterFrontend {
 		} catch (InterruptedException e1) {
 			e1.printStackTrace();
 		}
-		final Iterator<IoFuture<StreamConnection>> iter = futures.iterator();
+		/*final Iterator<IoFuture<StreamConnection>> iter = futures.iterator();
 		while(true) {
 			while(iter.hasNext()) {
 				final IoFuture<StreamConnection> fut = iter.next();
@@ -350,7 +359,7 @@ public final class Layer7RouterFrontend {
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
-		}
+		}*/
 	}
 	
 	private final static class Options {
