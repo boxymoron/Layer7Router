@@ -8,7 +8,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Deque;
 import java.util.Iterator;
-import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -49,7 +48,7 @@ public final class Layer7Router {
 			//.set(org.xnio.Options.READ_TIMEOUT, 30000)
 			//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
 			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
-			.set(org.xnio.Options.WORKER_IO_THREADS, 4)
+			.set(org.xnio.Options.WORKER_IO_THREADS, 1)
 			.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
 			.set(org.xnio.Options.BACKLOG, 1024*4)
 			.set(org.xnio.Options.KEEP_ALIVE, false)

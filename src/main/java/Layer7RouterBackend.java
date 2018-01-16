@@ -2,8 +2,6 @@ import java.io.IOException;
 import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
-import java.lang.management.MemoryPoolMXBean;
-import java.lang.management.OperatingSystemMXBean;
 import java.lang.management.ThreadMXBean;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -51,7 +49,7 @@ public final class Layer7RouterBackend {
 			//.set(org.xnio.Options.READ_TIMEOUT, 30000)
 			//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
 			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
-			.set(org.xnio.Options.WORKER_IO_THREADS, 4)
+			.set(org.xnio.Options.WORKER_IO_THREADS, 1)
 			.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
 			.set(org.xnio.Options.BACKLOG, 1024*4)
 			.set(org.xnio.Options.KEEP_ALIVE, false)
