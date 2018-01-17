@@ -220,27 +220,35 @@ public final class Layer7RouterFrontend {
 						//System.out.println(addr+" Connected to "+backendAddr);
 						channel.getSinkChannel().setWriteListener(new ChannelListener<ConduitStreamSinkChannel>(){
 							final ByteBuffer buff = ByteBuffer.allocate(req.getBytes().length);
-							{
-								buff.put(req.getBytes());
-								buff.flip();
-							}
+							volatile boolean remaining = false;
 							@Override
 							public void handleEvent(ConduitStreamSinkChannel c) {
 								channel.getSourceChannel().suspendReads();
+								c.suspendWrites();
 								try {
-									final String header = StandardCharsets.UTF_8.decode(buff).toString();
-									buff.rewind();
-									if(log.isDebugEnabled())log.debug("Writing Request: \n"+header);
-									
+									if(!remaining) {
+										buff.put(req.getBytes());
+										buff.flip();
+										final String header = StandardCharsets.UTF_8.decode(buff).toString();
+										buff.rewind();
+										if(log.isDebugEnabled())log.debug("Writing Request: \n"+header);
+										if(log.isDebugEnabled())log.debug(buff);
+									}
+
+									int pos = buff.position();
 									int count = c.write(buff);
 									boolean flushed = c.flush();
-									if(log.isDebugEnabled())log.debug("Wrote "+count+" bytes. (flushed: "+flushed+")");
+									buff.position(pos + count);
+									if(log.isDebugEnabled())log.debug("Wrote "+count+" bytes. (flushed: "+flushed+")"+buff);
 									if(buff.remaining() == 0) {
 										c.suspendWrites();
 										buff.clear();
-										buff.put(req.getBytes());
-										buff.flip();
+										remaining = false;
+										if(log.isDebugEnabled())log.debug("Finished sending request. Resuming Reads.");
 										channel.getSourceChannel().resumeReads();
+									}else {
+										remaining = true;
+										c.resumeWrites();
 									}
 									globalClientWriteBytes.addAndGet(count);
 									globalClientWriteReq.incrementAndGet();
