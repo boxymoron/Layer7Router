@@ -199,10 +199,9 @@ public final class Layer7RouterBackend {
 		private long lastActivity = System.currentTimeMillis();
 		private final ByteBuffer buffer = pool.allocate();
 
-		private volatile boolean initHeaders=true;
 		private volatile boolean writeHeaders=false;
-		private volatile boolean isProxy=false;
-		private volatile boolean writeSSLHeadersFromClient=false;
+		
+		private Request request=null;
 
 		private volatile boolean allClosed=false;
 		private StreamConnection streamConnection;
@@ -229,10 +228,6 @@ public final class Layer7RouterBackend {
 			try {
 				long clientReadBytes=0;
 				try{
-					if(!initHeaders && buffer.hasRemaining() && !writeSSLHeadersFromClient){
-						return;//the buffer still has stuff to write
-					}
-
 					buffer.clear();
 					clientReadBytes = frontendChannel.read(buffer);
 					if(clientReadBytes == -1){
@@ -241,9 +236,15 @@ public final class Layer7RouterBackend {
 						return;
 					}
 					globalClientReadBytes.addAndGet(clientReadBytes);
-					buffer.flip();					
+					buffer.flip();
 					
-					this.streamConnection.getSinkChannel().resumeWrites();
+					request = parseRequest();
+					
+					if(request.equals(Request.BODY)) {
+						this.streamConnection.getSinkChannel().resumeWrites();
+					}else {
+						this.streamConnection.getSinkChannel().resumeWrites();
+					}
 					if(isDebug){
 						totalReadsFromFrontend += clientReadBytes;
 						log.debug(buffer.toString());
@@ -264,6 +265,36 @@ public final class Layer7RouterBackend {
 				closeAll();
 			} finally {
 				if(isInfo)MDC.remove("channel");
+			}
+		}
+
+		private Request parseRequest() {
+			final String content = StandardCharsets.UTF_8.decode(buffer).toString();
+			buffer.rewind();
+			int boundary = content.indexOf("\r\n\r\n")+4;
+			int content_length = buffer.limit() - boundary;
+			String[] headersArray = content.substring(0, boundary).split("\r\n");
+			LinkedHashMap<String, String> headers = new LinkedHashMap<>();
+			for(String header : headersArray) {
+				if(header.startsWith("GET") || header.startsWith("POST")) {
+					headers.put("REQ", header);
+					continue;
+				}else {
+					final String[] headerParts = header.split(": ");
+					if(headerParts.length == 2) {
+						headers.put(headerParts[0], headerParts[1]);
+					}
+				}
+			}
+			if(headers.isEmpty()) {
+				return Request.BODY;
+			}else {
+				if(headers.containsKey("REQ")) {
+					buffer.position(boundary);
+					return new Request(headers, boundary);
+				}else {
+					return Request.BODY;
+				}
 			}
 		}
 
@@ -313,13 +344,12 @@ public final class Layer7RouterBackend {
 		public String toString() {
 			StringBuilder builder = new StringBuilder();
 			builder.append("ReadListener [lastActivity=").append(lastActivity).append(", buffer=")
-					.append(buffer).append(", initHeaders=").append(initHeaders).append(", writeHeaders=")
+					.append(buffer).append(", writeHeaders=")
 					.append(writeHeaders).append(", allClosed=").append(allClosed)
 					.append(", streamConnection=").append(streamConnection).append(", writeListener=")
 					.append(writeListener).append(", totalWritesToBackend=").append(totalWritesToBackend)
 					.append(", totalWritesToFrontend=").append(totalWritesToFrontend).append(", totalReadsFromBackend=")
-					.append(totalReadsFromBackend).append(", totalReadsFromFrontend=").append(totalReadsFromFrontend)
-					.append(", isProxy=").append(isProxy);
+					.append(totalReadsFromBackend).append(", totalReadsFromFrontend=").append(totalReadsFromFrontend);
 			builder.append(", frontent source resumed? ").append(streamConnection.getSinkChannel().isWriteResumed());
 			builder.append(", frontent sink resumed? ").append(streamConnection.getSinkChannel().isWriteResumed());
 			builder.append("]");
@@ -327,6 +357,16 @@ public final class Layer7RouterBackend {
 		}
 	}
 
+	private static class Request {
+		final static Request BODY = new Request(null, -1);
+		final LinkedHashMap<String, String> headers;
+		final int boundary;
+		public Request(LinkedHashMap<String, String> headers, int boundary) {
+			this.headers = headers;
+			this.boundary = boundary;
+		}
+	}
+	
 	private final static class FrontendWriteListener implements ChannelListener<ConduitStreamSinkChannel> {
 		private final FrontendReadListener readListener;
 
@@ -355,11 +395,12 @@ public final class Layer7RouterBackend {
 			}
 			channel.suspendWrites();
 			try {
-				if(writeHeader) {
+				if(Request.BODY != readListener.request) {
 					writeOKHeader(channel);
+					return;
 				}
 				int remaining = readListener.buffer.remaining();
-				if(remaining == 0){
+				if(remaining == 0) {
 					readListener.streamConnection.getSourceChannel().resumeReads();
 					return;
 				}
@@ -394,37 +435,40 @@ public final class Layer7RouterBackend {
 		}
 
 		private void writeOKHeader(final ConduitStreamSinkChannel channel) throws IOException {
-			int pos = readListener.buffer.position();
-			final String content = StandardCharsets.UTF_8.decode(readListener.buffer).toString();
-			if(log.isDebugEnabled())log.debug(content);
-			final String[] lines = content.toString().split("\r\n");
-			if(lines.length > 0) {
-				for(String line: lines){
-					String[] header = line.split(":");
-					if(header.length == 2) {
-						if("Content-Length".equals(header[0])) {
-							int contentLength = Integer.parseInt(header[1].trim());
-							final String ok_header = "HTTP/1.1 200 OK\r\nContent-Length: "+contentLength+"\r\n\r\n";
-							final ByteBuffer okBuff = ByteBuffer.allocate(ok_header.getBytes().length);
-							okBuff.put(ok_header.getBytes());
-							okBuff.flip();
-							int count = channel.write(okBuff);
-							boolean flushed = channel.flush();
-							if(isDebug)log.debug("Wrote "+count+" header bytes from backend to client (flushed: "+flushed+")");
-							globalClientWriteBytes.addAndGet(count);
-							String body = content.substring(content.indexOf(line)+line.length()+5);
-							readListener.buffer.clear();
-							readListener.buffer.put(body.getBytes());
-							readListener.buffer.flip();
-							writeBody=true;
-							writeHeader=false;
-						}
-					}
+			if(readListener.request.headers.containsKey("Content-Length")) {
+				int contentLength = Integer.parseInt(readListener.request.headers.get("Content-Length"));
+				final String ok_header = "HTTP/1.1 200 OK\r\nContent-Length: "+contentLength+"\r\n\r\n";
+				final ByteBuffer okBuff = ByteBuffer.allocate(ok_header.getBytes().length);
+				okBuff.put(ok_header.getBytes());
+				okBuff.flip();
+				int count = channel.write(okBuff);
+				boolean flushed = channel.flush();
+				if(isDebug)log.debug("Wrote "+count+" header bytes from backend to client (flushed: "+flushed+")");
+				globalClientWriteBytes.addAndGet(count);
+				if(readListener.buffer.hasRemaining()) {
+					count = channel.write(readListener.buffer);
+					flushed = channel.flush();
+					if(isDebug)log.debug("Wrote "+count+" body bytes from backend to client (flushed: "+flushed+")");
 				}
+				
 			}else {
-				readListener.buffer.position(pos);
-				readListener.buffer.compact();
+				String ok_header = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nHello";
+				if("keep-alive".equals(readListener.request.headers.get("Connection"))) {
+					ok_header = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 5\r\n\r\nHello";
+				}
+				final ByteBuffer okBuff = ByteBuffer.allocate(ok_header.getBytes().length);
+				okBuff.put(ok_header.getBytes());
+				okBuff.flip();
+				int count = channel.write(okBuff);
+				boolean flushed = channel.flush();
+				if(isDebug)log.debug("Wrote "+count+" header bytes from backend to client (flushed: "+flushed+")");
+				globalClientWriteBytes.addAndGet(count);
+				if(!"keep-alive".equals(readListener.request.headers.get("Connection"))) {
+					readListener.closeAll();
+				}
 			}
+			readListener.request = Request.BODY;
+			readListener.streamConnection.getSourceChannel().resumeReads();
 		}
 	}
 	

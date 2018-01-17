@@ -186,7 +186,7 @@ public final class Layer7RouterFrontend {
 		final String backend_ok = "HTTP/1.1 200 OK\r\nContent-Length: "+routerOptions.payload_bytes+"\r\n\r\n";
 		final StringBuilder sb = new StringBuilder();
 		final String header = "GET / HTTP/1.1\r\nHost: "+routerOptions.backend_host+"\r\nConnection: keep-alive\r\nContent-Length: ";
-		sb.append(header+(routerOptions.payload_bytes - (header.length() + 8))+"\r\n\r\n\r\n");
+		sb.append(header+(routerOptions.payload_bytes - (header.length() + 6))+"\r\n\r\n");
 		while(sb.length() < routerOptions.payload_bytes) {
 			sb.append("0");
 		}
@@ -285,7 +285,7 @@ public final class Layer7RouterFrontend {
 											if(header.length == 2) {
 												if("Content-Length".equals(header[0])) {
 													contentLength = Integer.parseInt(header[1].trim());
-													String body = content.substring(content.lastIndexOf("\r\n")+2);
+													String body = content.substring(content.lastIndexOf("\r\n\r\n")+4);
 													if(log.isDebugEnabled())log.debug("body: "+body.length()+":\n"+body);
 													totalReadBodyBytes += body.length();
 													if(totalReadBodyBytes == contentLength) {
