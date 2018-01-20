@@ -78,11 +78,11 @@ public final class Layer7Router {
 		cmdLineParser.parseArgument(args);
 		System.out.println(routerOptions.toString());
 		
-		bindAddresses = new InetSocketAddress[routerOptions.client_end_ip - routerOptions.client_start_ip];
+		bindAddresses = new InetSocketAddress[(routerOptions.client_end_ip - routerOptions.client_start_ip)+1];
 
 		worker = xnio.createWorker(xnioOptions);
 		
-		for(int octet=routerOptions.client_start_ip, i=0;octet<routerOptions.client_end_ip;octet++, i++) {
+		for(int octet=routerOptions.client_start_ip, i=0;octet<=routerOptions.client_end_ip;octet++, i++) {
 			final InetSocketAddress clientAddr = new InetSocketAddress(routerOptions.client_base_ip+"."+octet, 0);
 			bindAddresses[i] = clientAddr;
 		}
