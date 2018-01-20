@@ -83,7 +83,7 @@ public final class Layer7Router {
 		worker = xnio.createWorker(xnioOptions);
 		
 		for(int octet=routerOptions.client_start_ip, i=0;octet<routerOptions.client_end_ip;octet++, i++) {
-			final InetSocketAddress clientAddr = new InetSocketAddress("192.168.1."+octet, 0);
+			final InetSocketAddress clientAddr = new InetSocketAddress(routerOptions.client_base_ip+"."+octet, 0);
 			bindAddresses[i] = clientAddr;
 		}
 		
@@ -557,7 +557,6 @@ public final class Layer7Router {
 					return;
 				}
 				buffer.flip();
-
 				if(isDebug)log.debug("Read "+res+" bytes from Backend (source)");
 				frontendReadListener.totalReadsFromBackend += res;
 				globalBackendReadBytes.addAndGet(res);
@@ -799,6 +798,9 @@ public final class Layer7Router {
 		
 		@Option(name = "-backend_port", usage="port")
 		public Integer backend_port = 80;
+		
+		@Option(name = "-client_base_ip", usage="first three octets of ip address")
+		public String client_base_ip = "192.168.1";
 		
 		@Option(name = "-client_start_ip", usage="port")
 		public Integer client_start_ip = 215;
