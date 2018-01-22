@@ -182,7 +182,7 @@ public final class Layer7Router {
 			}else {
 				backendToClientPerSec = backendToClientPerSec / 1024f;
 			}
-			final String formatted = String.format("Sess: %,.1f per/sec, %,d total, %,d curr, %,d FR -> %,d BW, %,d FW <- %,d BR, in %,.1f %s/sec, out %,.1f %s/sec, Load %,.2f, HeapFree %,.1f MB, EdenUsed %,.1f MB, Direct %,.1f MB", 
+			final String formatted = String.format("Sess: %,6.1f per/sec, %,7d total, %,6d curr, %,8d FR -> %,d BW, %,d FW <- %,8d BR, in %,7.1f %s/sec, out %,7.1f %s/sec, Load %,1.2f, HeapFree %,5.1f MB, EdenUsed %,4.0f MB, Direct %,4.0f MB", 
 					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), globalClientReadBytes.get(), globalBackendWriteBytes.get(), globalClientWriteBytes.get(), globalBackendReadBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, operatingSystemMXBean.getSystemLoadAverage(), ((float)runtime.freeMemory())/(1024f*1024f), ((float)edenBean.getUsage().getUsed())/(1024f*1024f), ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f));
 			if(!formatted.equals(lastFormatted)){
 				System.out.println(formatted);

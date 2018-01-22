@@ -14,7 +14,7 @@ public class CustomByteBufferPool {
 		return ByteBufferPool.subPool(LARGE_DIRECT, bufferSize);
 	}
 
-	public static void test() {
+	public static void test() throws InterruptedException {
 		List<ByteBuffer> buffers = new ArrayList<>();
 		try {
 			while(true) {
@@ -29,11 +29,12 @@ public class CustomByteBufferPool {
 			t.printStackTrace();
 			System.out.println(buffers.size());
 		}
+		Thread.sleep(120* 1000);
 	}
 	
 	public static void main(String[] args) throws InterruptedException {
 		//Thread.sleep(20*1000);
 		test();
-		Thread.sleep(120* 1000);
+		
 	}
 }

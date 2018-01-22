@@ -1,3 +1,4 @@
+
 import java.io.IOException;
 import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ManagementFactory;
@@ -5,7 +6,6 @@ import java.lang.management.MemoryMXBean;
 import java.lang.management.ThreadMXBean;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Deque;
@@ -238,17 +238,20 @@ public final class Layer7RouterBackend {
 					globalClientReadBytes.addAndGet(clientReadBytes);
 					buffer.flip();
 					
-					request = parseRequest();
-					
-					if(request.equals(Request.BODY)) {
-						this.streamConnection.getSinkChannel().resumeWrites();
+					if(request == null) {
+						request = new Request(buffer);
+						writeListener.req = request;
 					}else {
-						this.streamConnection.getSinkChannel().resumeWrites();
+						request.parseRequest(buffer);
 					}
+
+					streamConnection.getSinkChannel().resumeWrites();
+
 					if(isDebug){
 						totalReadsFromFrontend += clientReadBytes;
 						log.debug(buffer.toString());
 						log.debug("Read "+clientReadBytes+" bytes from frontend (source)");
+						log.debug(request);
 					}
 				}catch(IOException e){
 					if("Connection reset by peer".equals(e.getMessage())){
@@ -268,35 +271,7 @@ public final class Layer7RouterBackend {
 			}
 		}
 
-		private Request parseRequest() {
-			final String content = StandardCharsets.UTF_8.decode(buffer).toString();
-			buffer.rewind();
-			int boundary = content.indexOf("\r\n\r\n")+4;
-			int content_length = buffer.limit() - boundary;
-			String[] headersArray = content.substring(0, boundary).split("\r\n");
-			LinkedHashMap<String, String> headers = new LinkedHashMap<>();
-			for(String header : headersArray) {
-				if(header.startsWith("GET") || header.startsWith("POST")) {
-					headers.put("REQ", header);
-					continue;
-				}else {
-					final String[] headerParts = header.split(": ");
-					if(headerParts.length == 2) {
-						headers.put(headerParts[0], headerParts[1]);
-					}
-				}
-			}
-			if(headers.isEmpty()) {
-				return Request.BODY;
-			}else {
-				if(headers.containsKey("REQ")) {
-					buffer.position(boundary);
-					return new Request(headers, boundary);
-				}else {
-					return Request.BODY;
-				}
-			}
-		}
+
 
 		public final boolean checkLiveness() {
 			if(!streamConnection.isOpen()){
@@ -356,25 +331,17 @@ public final class Layer7RouterBackend {
 			return builder.toString();
 		}
 	}
-
-	private static class Request {
-		final static Request BODY = new Request(null, -1);
-		final LinkedHashMap<String, String> headers;
-		final int boundary;
-		public Request(LinkedHashMap<String, String> headers, int boundary) {
-			this.headers = headers;
-			this.boundary = boundary;
-		}
-	}
 	
 	private final static class FrontendWriteListener implements ChannelListener<ConduitStreamSinkChannel> {
-		private final FrontendReadListener readListener;
-
-		private boolean writeHeader=true;
-		private boolean writeBody=false;
-
+		private final FrontendReadListener readListener;		
+		private Request req;
+		private StreamConnection streamConnection;
+		private ByteBuffer buffer;
+		
 		public FrontendWriteListener(FrontendReadListener readListener){
 			this.readListener = readListener;
+			this.streamConnection = readListener.streamConnection;
+			this.buffer = readListener.buffer;
 		}
 		
 		@Override
@@ -382,43 +349,57 @@ public final class Layer7RouterBackend {
 			if(readListener.allClosed){
 				return;
 			}
-			if(isInfo)MDC.put("channel", readListener.streamConnection.hashCode());
-			if(!readListener.streamConnection.isOpen() || !channel.isOpen()){
+			
+			if(isInfo)MDC.put("channel", streamConnection.hashCode());
+			
+			if(!streamConnection.getSourceChannel().isOpen()){
 				if(isDebug)log.debug("Frontend channel is closed.");
 				readListener.closeAll();
 				return;
-			}
-			if(!channel.isOpen()){
+			}else if(!channel.isOpen()){
 				if(isDebug)log.debug("Frontent sink is closed.");
 				readListener.closeAll();
 				return;
 			}
+			
 			channel.suspendWrites();
+			
 			try {
-				if(Request.BODY != readListener.request) {
+				if(!req.isBody()) {
 					writeOKHeader(channel);
 					return;
 				}
-				int remaining = readListener.buffer.remaining();
-				if(remaining == 0) {
-					readListener.streamConnection.getSourceChannel().resumeReads();
+				final int remaining = buffer.remaining();
+				if(remaining == 0 && !req.isMoreToWrite() && !req.isKeepAlive()) {
+						readListener.closeAll();
+						return;
+				}else if(remaining == 0) {
+					streamConnection.getSourceChannel().resumeReads();
 					return;
 				}
+				
 				try{
-					long count = channel.write(readListener.buffer);
+					long count = channel.write(buffer);
 					boolean flushed = channel.flush();
-					if(isDebug)log.debug("Wrote "+count+" body bytes from backend to client (flushed: "+flushed+")");
+					req.inc_writes((int) count);
 					readListener.totalWritesToFrontend += count;
 					globalClientWriteBytes.addAndGet(count);
+					if(isDebug) {
+						log.debug("Wrote "+count+" body bytes from backend to client (flushed: "+flushed+")");
+						log.debug(req);
+					}
 					if(count != remaining){
+						if(isDebug)log.debug("pending writes...");
 						channel.resumeWrites();
 						return;
-					}else {
-						
-						readListener.streamConnection.getSourceChannel().resumeReads();
+					}else if(!req.isKeepAlive() && !req.isMoreToWrite()) {
+						readListener.closeAll();
+						return;
 					}
+					if(isDebug)log.debug("Resuming reads.");
+					streamConnection.getSourceChannel().resumeReads();
 				}catch(IOException e){
-					log.error("Error writing to Frontend (sink) "+((InetSocketAddress)readListener.streamConnection.getPeerAddress()).toString(),e);
+					log.error("Error writing to Frontend (sink) "+((InetSocketAddress)streamConnection.getPeerAddress()).toString(),e);
 					readListener.closeAll();
 					return;
 				}
@@ -435,9 +416,15 @@ public final class Layer7RouterBackend {
 		}
 
 		private void writeOKHeader(final ConduitStreamSinkChannel channel) throws IOException {
-			if(readListener.request.headers.containsKey("Content-Length")) {
-				int contentLength = Integer.parseInt(readListener.request.headers.get("Content-Length"));
-				final String ok_header = "HTTP/1.1 200 OK\r\nContent-Length: "+contentLength+"\r\n\r\n";
+			if(readListener.request.getContent_length() != -1) {
+				String ok_header = "HTTP/1.1 200 OK\r\nContent-Length: "+readListener.request.getContent_length()+"\r\n\r\n";
+				if(req.isKeepAlive()) {
+					ok_header = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: "+readListener.request.getContent_length()+"\r\n\r\n";
+				}
+				if("100-continue".equals(req.getExpect())) {
+					ok_header = "HTTP/1.1 100 Continue\r\n\r\n";
+				}
+				
 				final ByteBuffer okBuff = ByteBuffer.allocate(ok_header.getBytes().length);
 				okBuff.put(ok_header.getBytes());
 				okBuff.flip();
@@ -447,13 +434,15 @@ public final class Layer7RouterBackend {
 				globalClientWriteBytes.addAndGet(count);
 				if(readListener.buffer.hasRemaining()) {
 					count = channel.write(readListener.buffer);
+					globalClientWriteBytes.addAndGet(count);
+					req.inc_writes(count);
 					flushed = channel.flush();
 					if(isDebug)log.debug("Wrote "+count+" body bytes from backend to client (flushed: "+flushed+")");
 				}
 				
 			}else {
 				String ok_header = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nHello";
-				if("keep-alive".equals(readListener.request.headers.get("Connection"))) {
+				if(req.isKeepAlive()) {
 					ok_header = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 5\r\n\r\nHello";
 				}
 				final ByteBuffer okBuff = ByteBuffer.allocate(ok_header.getBytes().length);
@@ -462,12 +451,13 @@ public final class Layer7RouterBackend {
 				int count = channel.write(okBuff);
 				boolean flushed = channel.flush();
 				if(isDebug)log.debug("Wrote "+count+" header bytes from backend to client (flushed: "+flushed+")");
+				req.inc_writes(count);
 				globalClientWriteBytes.addAndGet(count);
-				if(!"keep-alive".equals(readListener.request.headers.get("Connection"))) {
+				if(!req.isKeepAlive()) {
 					readListener.closeAll();
 				}
 			}
-			readListener.request = Request.BODY;
+			readListener.request.setBody(true);;
 			readListener.streamConnection.getSourceChannel().resumeReads();
 		}
 	}

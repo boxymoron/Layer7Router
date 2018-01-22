@@ -206,7 +206,7 @@ public final class Layer7RouterFrontend {
 					}
 				}
 				
-				final InetSocketAddress clientAddr = new InetSocketAddress("192.168.1."+ip, 0);
+				final InetSocketAddress clientAddr = new InetSocketAddress(routerOptions.client_base_ip+"."+ip, 0);
 				//System.out.println(clientAddr.getAddress().getHostAddress()+":"+clientAddr.getPort()+" Connecting to "+backendAddr);
 				final IoFuture<StreamConnection> future = worker.openStreamConnection(clientAddr, backendAddr, new ChannelListener<StreamConnection> () {
 					@Override
@@ -425,6 +425,9 @@ public final class Layer7RouterFrontend {
 		@Option(name = "-backend_port", usage="port")
 		public Integer backend_port = 80;
 		
+		@Option(name = "-client_base_ip", usage="first three octets of ip address")
+		public String client_base_ip = "192.168.1";
+		
 		@Option(name = "-client_start_ip", usage="ip address")
 		public Integer client_start_ip = 80;
 		
@@ -448,11 +451,18 @@ public final class Layer7RouterFrontend {
 
 		@Override
 		public String toString() {
-			return "Options [listen_port=" + listen_port + ", backend_host=" + backend_host + ", backend_port="
-					+ backend_port + ", client_start_ip=" + client_start_ip + ", client_end_ip=" + client_end_ip
-					+ ", sleep_ms=" + sleep_ms + ", connections_per_ip=" + connections_per_ip + ", payload_bytes="
-					+ payload_bytes + ", damping_factor=" + damping_factor + "]";
+			StringBuilder builder = new StringBuilder();
+			builder.append("Options [listen_port=").append(listen_port).append(", backend_host=").append(backend_host)
+					.append(", backend_port=").append(backend_port).append(", client_base_ip=").append(client_base_ip)
+					.append(", client_start_ip=").append(client_start_ip).append(", client_end_ip=")
+					.append(client_end_ip).append(", sleep_ms=").append(sleep_ms).append(", connections_per_ip=")
+					.append(connections_per_ip).append(", payload_bytes=").append(payload_bytes)
+					.append(", damping_factor=").append(damping_factor).append(", target_util=").append(target_util)
+					.append("]");
+			return builder.toString();
 		}
+
+		
 	}
 	
 	private static ThreadMXBean getWorkerCpuTimes(final Map<Long, Long> workerCpuTimes) {
