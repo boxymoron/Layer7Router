@@ -1,4 +1,5 @@
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 
 import org.apache.log4j.Logger;
@@ -6,8 +7,12 @@ import org.apache.log4j.Logger;
 public final class Request {
 	final static Logger log = Logger.getLogger(Request.class);
 	
+	final static boolean isInfo=log.isInfoEnabled();
+	final static boolean isDebug=log.isDebugEnabled();
+	final static boolean isTrace=log.isTraceEnabled();
+	
 	private int boundary = -1;
-	private volatile boolean isBody = false;
+	private boolean isBody = false;
 	private String uri;
 	private String host;
 	private String connection;
@@ -16,23 +21,28 @@ public final class Request {
 	private int body_bytes_read = 0;
 	private int body_bytes_written = 0;
 	
+	final private static char[] HOST = "Host:".toCharArray();
+	final private static char[] CONNECTION = "Connection:".toCharArray();
+	final private static char[] EXPECT = "Expect:".toCharArray();
+	final private static char[] CONTENT_LENGTH = "Content-Length:".toCharArray();
+	final private static char[] CONTENT_LENGTH2 = "Content-length:".toCharArray();
+	
 	public Request(ByteBuffer buffer) {
 		parseRequest(buffer);
 	}
 	
-	public final void parseRequest(ByteBuffer buffer) {		
+	public final void parseRequest(ByteBuffer buffer) {
 		if(isBody || boundary != -1) {
 			final int read_so_far = body_bytes_read + buffer.remaining();
 			if(read_so_far < content_length) {
-				if(log.isDebugEnabled())log.debug("in body:");
+				if(isDebug)log.debug("in body:");
 				body_bytes_read = read_so_far;
 				return;
 			} else if(read_so_far == content_length) {
-				
 				body_bytes_read = read_so_far;
-				if(log.isDebugEnabled())log.debug("finished reading body\n"+this.toString());
+				if(isDebug)log.debug("finished reading body\n"+this.toString());
 				if(body_bytes_written == content_length) {
-					if(log.isDebugEnabled())log.debug("finished writing body");
+					if(isDebug)log.debug("finished writing body");
 					boundary = -1;
 					isBody = false;
 				}
@@ -60,38 +70,51 @@ public final class Request {
 			}
 		}
 		
-		log.debug("Parsing...");
-		final String content = StandardCharsets.US_ASCII.decode(buffer).toString();
-		int boundary = content.indexOf("\r\n\r\n");
-		if(boundary > 0) {
-			boundary += 4;
-			content.substring(0, boundary);
+		if(isDebug)log.debug("Parsing...");
+		int pos = buffer.position();
+		final CharBuffer cbuff = StandardCharsets.ISO_8859_1.decode(buffer);
+		buffer.position(pos);
+		if(cbuff.remaining() < 4) {
+			this.isBody = true;
+			return;
 		}
-		if(this.boundary == -1) {
-			this.boundary = boundary;
-		}else {
-			isBody = true;
+		int boundary = -1;
+		for(int i=0;i+3<cbuff.remaining();i++) {
+			if(cbuff.charAt(i) == '\r' && cbuff.charAt(i+1) == '\n' && cbuff.charAt(i+2) == '\r' && cbuff.charAt(i+3) == '\n') {
+				boundary = i+4;
+				break;
+			}
 		}
-		
-		//if(log.isDebugEnabled())log.debug("Headers:\n---------------------\n"+content.substring(0, boundary < 0 ? content.length() : boundary)+"\n------------------------------------------------------");
-		//if(log.isDebugEnabled())log.debug("Body:\n------------------------\n"+content.substring(boundary < 0 ? content.length() : boundary)+"\n------------------------------------------------------");
+		this.boundary = boundary;
+		if(boundary == -1) {//If no \r\n\r\n was found we're probably in the body, reset this.boundary to -1 and skip parsing logic below.
+			this.isBody = true;
+			return;
+		}
 		
 		int body_length_in_this_buffer = buffer.limit() - boundary;
 		body_bytes_read += body_length_in_this_buffer;
-		final String[] headersArray = content.split("\r");
-		for(String header : headersArray) {
-			if((header.endsWith("HTTP/1.1") || header.endsWith("HTTP/1.0")) && (header.startsWith("GET") || header.startsWith("HEAD") || header.startsWith("POST") || header.startsWith("PUT") || header.startsWith("DELETE") || header.startsWith("CONNECT") || header.startsWith("OPTIONS") || header.startsWith("TRACE"))) {
-				uri = header;
-				continue;
-			}else if(header.startsWith("\nHost: ")) {
-				host = header.substring("\nHost: ".length(), header.length());
-			}else if(header.startsWith("\nContent-Length: ") || header.startsWith("\nContent-length: ")) {
-				content_length = Integer.parseInt(header.substring("\nContent-Length: ".length(), header.length()));
-			}else if(header.startsWith("\nConnection: ")) {
-				connection = header.substring("\nConnection: ".length(), header.length());
-			}else if(header.startsWith("\nExpect: ")) {
-				expect = header.substring("\nExpect: ".length(), header.length());
+		int prev=0;
+		final char[] arr = cbuff.array();
+		for(int i=0;i<arr.length && prev+2<arr.length;i++) {
+			if(cbuff.charAt(i) == '\r') {
+				if(prev == 0) {
+					uri = new String(arr, prev, i);
+				} else {
+					if(fastStartsWith(arr, prev, HOST)) {
+						host = new String(arr, prev+HOST.length+1, i-(prev+HOST.length+1));
+					}else if(fastStartsWith(arr, prev, CONNECTION)) {
+						connection = new String(arr, prev+CONNECTION.length+1, i-(prev+CONNECTION.length+1));
+					}else if(fastStartsWith(arr, prev, CONNECTION)) {
+						connection = new String(arr, prev+CONNECTION.length+1, i-(prev+CONNECTION.length+1));
+					}else if(fastStartsWith(arr, prev, EXPECT)) {
+						expect = new String(arr, prev+EXPECT.length+1, i-(prev+EXPECT.length+1));
+					}else if(fastStartsWith(arr, prev, CONTENT_LENGTH) || fastStartsWith(arr, prev, CONTENT_LENGTH2)) {
+						content_length = Integer.parseInt(new String(arr, prev+CONTENT_LENGTH.length+1, i-(prev+CONTENT_LENGTH.length+1)));
+					}
+				}
+				prev=i+2;
 			}
+			
 		}
 		if(uri == null && host == null) {
 			return;
@@ -99,6 +122,49 @@ public final class Request {
 		if(boundary > 0) {
 			buffer.position(boundary);
 		}
+	}
+	
+	private final static boolean fastStartsWith(char[] arr, int off, char[] str) {
+		for(int i=0;i<str.length;i++) {
+			if(arr[off+i] != str[i]) {
+				return false;
+			}
+		}
+		return true;
+	}
+	
+	public static void main(String[] args) throws InterruptedException {
+		String reqStr = "POST /path/index.html HTTP/1.1\r\n" + 
+		"Host: localhost\r\n" + 
+		"Connection: keep-alive\r\n" + 
+		"Expect: 100-continue\r\n" + 
+		"User-Agent: Chrome/1.0\r\n" + 
+		"Content-Type: application/x-www-form-urlencoded\r\n" + 
+		"Content-length: 32\r\n" + 
+		"\r\n";
+		
+		String body = "foo=bar&asdf+asdf=asdf";
+		//System.out.println("req, headers length: "+reqStr.length()+" body length: "+body.length()+" contents:\n"+reqStr+body);
+		reqStr += body;
+		//System.out.println(reqStr.indexOf("\r\n\r\n"));
+		final ByteBuffer buff = ByteBuffer.allocate(reqStr.getBytes().length);
+		buff.put(reqStr.getBytes());
+		buff.flip();
+		
+		Request req = new Request(buff);
+		buff.rewind();
+		System.out.println(req);
+		//Thread.sleep(30000);
+		long start = System.currentTimeMillis();
+		for(int i=0;i<20000000;i++) {
+			Request req2 = new Request(buff);
+			buff.rewind();
+		}
+		long end = System.currentTimeMillis();
+		System.out.println("Took: "+(end-start)+" ms");
+		System.out.println("Throughput: "+(20000000d / (((double)end-(double)start)/1000d))+" per/sec");
+		//System.out.println(req);
+		
 	}
 	
 	public boolean isMoreToRead() {
