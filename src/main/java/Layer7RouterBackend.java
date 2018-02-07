@@ -6,8 +6,6 @@ import java.lang.management.MemoryMXBean;
 import java.lang.management.ThreadMXBean;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.Deque;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -19,7 +17,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.apache.log4j.Logger;
 import org.apache.log4j.MDC;
 import org.kohsuke.args4j.CmdLineParser;
-import org.kohsuke.args4j.Option;
 import org.xnio.ByteBufferPool;
 import org.xnio.ChannelListener;
 import org.xnio.CustomByteBufferPool;
@@ -31,118 +28,70 @@ import org.xnio.channels.AcceptingChannel;
 import org.xnio.conduits.ConduitStreamSinkChannel;
 import org.xnio.conduits.ConduitStreamSourceChannel;
 
+import com.boxymoron.request.Request8;
+
 /**
  * TODO: Look into cpu/thread affinity.
  * @author royer
  *
  */
-public final class Layer7RouterBackend {
-
+public final class Layer7RouterBackend extends Common {
+	
 	final static Logger log = Logger.getLogger(Layer7RouterBackend.class);
-	final private static int MB = 1024*1024;
 	
-	final static Xnio xnio = Xnio.getInstance();
-	final static OptionMap xnioOptions = OptionMap.builder()
-			.set(org.xnio.Options.ALLOW_BLOCKING, false)
-			.set(org.xnio.Options.RECEIVE_BUFFER, 8192)
-			.set(org.xnio.Options.SEND_BUFFER, 8192)
-			//.set(org.xnio.Options.READ_TIMEOUT, 30000)
-			//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
-			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
-			.set(org.xnio.Options.WORKER_IO_THREADS, 3)
-			.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
-			.set(org.xnio.Options.BACKLOG, 1024*4)
-			.set(org.xnio.Options.KEEP_ALIVE, false)
-			.getMap();
-	static XnioWorker worker;
-	
+	final static boolean isInfo=log.isInfoEnabled();
+	final static boolean isDebug=log.isDebugEnabled();
+	final static boolean isTrace=log.isTraceEnabled();
+
 	final static AtomicInteger totalAccepted = new AtomicInteger();
 	final static AtomicInteger sessionsCount = new AtomicInteger();
 	final static AtomicLong globalClientWriteBytes = new AtomicLong();
 	final static AtomicLong globalClientReadBytes = new AtomicLong();
 
+	final static Xnio xnio = Xnio.getInstance();
+	static XnioWorker worker;
+	static OptionMap xnioOptions;
 	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
-	final static ByteBufferPool pool = CustomByteBufferPool.allocatePool(8192);
+	static ByteBufferPool pool;
 	
 	final static Options routerOptions = new Options();
-	
-	final static boolean isInfo=log.isInfoEnabled();
-	final static boolean isDebug=log.isDebugEnabled();
-	final static boolean isTrace=log.isTraceEnabled();
 
 	public static void main(String[] args) throws Exception {
 		final CmdLineParser cmdLineParser = new CmdLineParser(routerOptions);
 		cmdLineParser.parseArgument(args);
 		System.out.println(routerOptions.toString());
 
+		pool = CustomByteBufferPool.allocatePool(routerOptions.buffer_size);
+		xnioOptions = OptionMap.builder()
+				.set(org.xnio.Options.ALLOW_BLOCKING, false)
+				.set(org.xnio.Options.RECEIVE_BUFFER, routerOptions.buffer_size)
+				.set(org.xnio.Options.SEND_BUFFER, routerOptions.buffer_size)
+				//.set(org.xnio.Options.READ_TIMEOUT, 30000)
+				//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
+				.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
+				.set(org.xnio.Options.WORKER_IO_THREADS, 2)
+				.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
+				.set(org.xnio.Options.BACKLOG, 1024 * 4)
+				.set(org.xnio.Options.KEEP_ALIVE, false)
+				.getMap();
+
 		worker = xnio.createWorker(xnioOptions);
-		
-		
+
 		final Deque<FrontendReadListener> readListeners = new ConcurrentLinkedDeque<>();
 
-		final ChannelListener<AcceptingChannel<StreamConnection>> acceptListener2 = new ChannelListener<AcceptingChannel<StreamConnection>>() {
-			@Override
-			public final void handleEvent(AcceptingChannel<StreamConnection> channel) {
-				try {
-					StreamConnection accepted;
-					while ((accepted = channel.accept()) != null) {
-						if(isDebug)log.debug("Accepted: " + accepted.getPeerAddress());
-						totalAccepted.incrementAndGet();
-						final FrontendReadListener readListener = new FrontendReadListener();
-						accepted.getSourceChannel().setReadListener(readListener);
-						accepted.getSourceChannel().setCloseListener(readListener);
-						readListener.streamConnection = accepted;
-						sessionsCount.incrementAndGet();
-						
-						final FrontendWriteListener writeListener = new FrontendWriteListener(readListener);
-						accepted.getSinkChannel().setWriteListener(writeListener);
-						accepted.getSinkChannel().setCloseListener(writeListener);
-						readListener.writeListener = writeListener;
-
-						accepted.getSourceChannel().resumeReads();
-						//accepted.getSinkChannel().resumeWrites();
-						readListeners.push(readListener);
-					}
-				} catch (IOException e) {
-					log.error("", e);
-					try {
-						if(isDebug)log.debug("Closing channel: "+channel);
-						channel.close();
-					} catch (IOException e1) {
-						log.error("", e1);
-					}
-				}
-			}
-		};
+		final ChannelListener<AcceptingChannel<StreamConnection>> acceptListener2 = getAcceptListener(readListeners);
 
 		final AcceptingChannel<StreamConnection> server = worker.createStreamConnectionServer(new InetSocketAddress(routerOptions.listen_port), acceptListener2, OptionMap.EMPTY);
 		server.resumeAccepts();
 
 		if(isInfo)log.info("Listening on " + server.getLocalAddress());
 		
-		final Thread reaper = new Thread(new Thread(){
-			public void run(){
-				while(true){
-					try{
-						Thread.sleep(2000);
-						final Iterator<FrontendReadListener> iter = readListeners.iterator();
-						while(iter.hasNext()){
-							FrontendReadListener listener = iter.next();
-							if(!listener.checkLiveness()){
-								iter.remove();
-							}else{
-								//if(isDebug)log.debug(listener.toString());
-							}
-						}
-					}catch(Exception e){
-						e.printStackTrace();
-					}
-				}
-			}
-		});
-		reaper.setName("Idle Connection Reaper");
-		reaper.start();
+		setupConnectionReaper(readListeners);
 		
+		printStatistics();
+	}
+
+	private static void printStatistics() throws InterruptedException {
 		final Map <Long, Long> workerCpuTimes = new LinkedHashMap<Long, Long>();
 		final Runtime runtime = Runtime.getRuntime();
 		final BufferPoolMXBean bufferPoolBean = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream().filter(bb->"direct".equals(bb.getName())).findFirst().get();
@@ -193,22 +142,80 @@ public final class Layer7RouterBackend {
 		}
 	}
 
-	private final static class FrontendReadListener implements ChannelListener<ConduitStreamSourceChannel> {
-		private final static Logger log = Logger.getLogger(FrontendReadListener.class);
-		
-		private long lastActivity = System.currentTimeMillis();
-		private final ByteBuffer buffer = pool.allocate();
+	private static void setupConnectionReaper(final Deque<FrontendReadListener> readListeners) {
+		final Thread reaper = new Thread(new Thread(){
+			public void run(){
+				while(true){
+					try{
+						Thread.sleep(2000);
+						final Iterator<FrontendReadListener> iter = readListeners.iterator();
+						while(iter.hasNext()){
+							FrontendReadListener listener = iter.next();
+							if(!listener.checkLiveness()){
+								iter.remove();
+							}else{
+								//if(isDebug)log.debug(listener.toString());
+							}
+						}
+					}catch(Exception e){
+						e.printStackTrace();
+					}
+				}
+			}
+		});
+		reaper.setName("Idle Connection Reaper");
+		reaper.start();
+	}
 
+	private static ChannelListener<AcceptingChannel<StreamConnection>> getAcceptListener(final Deque<FrontendReadListener> readListeners) {
+		final ChannelListener<AcceptingChannel<StreamConnection>> acceptListener2 = new ChannelListener<AcceptingChannel<StreamConnection>>() {
+			@Override
+			public final void handleEvent(AcceptingChannel<StreamConnection> channel) {
+				try {
+					StreamConnection accepted;
+					while ((accepted = channel.accept()) != null) {
+						if(isDebug)log.debug("Accepted: " + accepted.getPeerAddress());
+						totalAccepted.incrementAndGet();
+						final FrontendReadListener readListener = new FrontendReadListener();
+						accepted.getSourceChannel().setReadListener(readListener);
+						accepted.getSourceChannel().setCloseListener(readListener);
+						readListener.streamConnection = accepted;
+						sessionsCount.incrementAndGet();
+						
+						final FrontendWriteListener writeListener = new FrontendWriteListener(readListener);
+						accepted.getSinkChannel().setWriteListener(writeListener);
+						accepted.getSinkChannel().setCloseListener(writeListener);
+						readListener.writeListener = writeListener;
+
+						accepted.getSourceChannel().resumeReads();
+						//accepted.getSinkChannel().resumeWrites();
+						readListeners.push(readListener);
+					}
+				} catch (IOException e) {
+					log.error("", e);
+					try {
+						if(isDebug)log.debug("Closing channel: "+channel);
+						channel.close();
+					} catch (IOException e1) {
+						log.error("", e1);
+					}
+				}
+			}
+		};
+		return acceptListener2;
+	}
+
+	private final static class FrontendReadListener implements ChannelListener<ConduitStreamSourceChannel> {
+		private ByteBuffer buffer = pool.allocate();
+		private long lastActivity = System.currentTimeMillis();
+		
 		private volatile boolean writeHeaders=false;
 		
-		private Request request=null;
-
+		private Request8 request=null;
 		private volatile boolean allClosed=false;
 		private StreamConnection streamConnection;
 		private FrontendWriteListener writeListener;
-		private long totalWritesToBackend=0;
 		private long totalWritesToFrontend=0;
-		private long totalReadsFromBackend=0;
 		private long totalReadsFromFrontend=0;
 
 		private FrontendReadListener(){
@@ -221,38 +228,43 @@ public final class Layer7RouterBackend {
 			if(isDebug)MDC.put("channel", streamConnection.hashCode());
 			if(!streamConnection.isOpen()|| !frontendChannel.isOpen()){
 				if(isDebug)log.debug("Frontend channel is closed.");
+				ByteBufferPool.free(buffer);
 				closeAll();
 				return;
 			}
 			
 			try {
-				long clientReadBytes=0;
 				try{
 					buffer.clear();
-					clientReadBytes = frontendChannel.read(buffer);
+					final int clientReadBytes = frontendChannel.read(buffer);
 					if(clientReadBytes == -1){
 						if(isDebug)log.debug("Client End of stream.");
 						closeAll();
 						return;
 					}
+					if(isDebug)log.debug("Read "+clientReadBytes+" bytes from frontend (source)");
 					globalClientReadBytes.addAndGet(clientReadBytes);
+					totalReadsFromFrontend += clientReadBytes;
 					buffer.flip();
 					
 					if(request == null) {
-						request = new Request(buffer);
+						request = new Request8(buffer);
 						writeListener.req = request;
 					}else {
 						request.parseRequest(buffer);
 					}
 
-					streamConnection.getSinkChannel().resumeWrites();
-
-					if(isDebug){
-						totalReadsFromFrontend += clientReadBytes;
-						log.debug(buffer.toString());
-						log.debug("Read "+clientReadBytes+" bytes from frontend (source)");
-						log.debug(request);
+					if(isDebug)log.debug(request);
+					
+					if(request.isMoreToRead()) {
+						if(isDebug)log.debug("Resuming Reads");
+						frontendChannel.resumeReads();
+					} else {
+						buffer.position(buffer.limit());
+						if(isDebug)log.debug("Resuming Writes");
+						streamConnection.getSinkChannel().resumeWrites();
 					}
+					
 				}catch(IOException e){
 					if("Connection reset by peer".equals(e.getMessage())){
 						log.info("Connection reset by Frontend (source): "+((InetSocketAddress)streamConnection.getPeerAddress()).toString());
@@ -270,8 +282,6 @@ public final class Layer7RouterBackend {
 				if(isInfo)MDC.remove("channel");
 			}
 		}
-
-
 
 		public final boolean checkLiveness() {
 			if(!streamConnection.isOpen()){
@@ -301,16 +311,16 @@ public final class Layer7RouterBackend {
 			if(isDebug)log.debug("Closing all resources.");
 			try{
 				streamConnection.close();
+				streamConnection.getSinkChannel().close();
 			}catch(IOException e1){
 				log.error("", e1);
 			}finally{
-
-				ByteBufferPool.free(buffer);
-
+				CustomByteBufferPool.free(buffer);
+				this.buffer = null;
+				this.writeListener.buffer = null;
 				if(isInfo){
 					String backendAddr = "";
-					
-					log.info(String.format("Session Closed. Frontend: "+((InetSocketAddress)streamConnection.getPeerAddress()).toString()+", Backend: "+backendAddr+" Stats: %,d writes to backend, %,d reads from frontend, %,d writes to frontend, %,d reads from backend", totalWritesToBackend, totalReadsFromFrontend, totalWritesToFrontend, totalReadsFromBackend));
+					log.info(String.format("Session Closed. Frontend: "+((InetSocketAddress)streamConnection.getPeerAddress()).toString()+", Backend: "+backendAddr+" Stats: %,d reads from frontend, %,d writes to frontend", totalReadsFromFrontend, totalWritesToFrontend));
 				}
 			}
 		}
@@ -322,9 +332,8 @@ public final class Layer7RouterBackend {
 					.append(buffer).append(", writeHeaders=")
 					.append(writeHeaders).append(", allClosed=").append(allClosed)
 					.append(", streamConnection=").append(streamConnection).append(", writeListener=")
-					.append(writeListener).append(", totalWritesToBackend=").append(totalWritesToBackend)
-					.append(", totalWritesToFrontend=").append(totalWritesToFrontend).append(", totalReadsFromBackend=")
-					.append(totalReadsFromBackend).append(", totalReadsFromFrontend=").append(totalReadsFromFrontend);
+					.append(", totalWritesToFrontend=").append(totalWritesToFrontend)
+					.append(", totalReadsFromFrontend=").append(totalReadsFromFrontend);
 			builder.append(", frontent source resumed? ").append(streamConnection.getSinkChannel().isWriteResumed());
 			builder.append(", frontent sink resumed? ").append(streamConnection.getSinkChannel().isWriteResumed());
 			builder.append("]");
@@ -334,7 +343,7 @@ public final class Layer7RouterBackend {
 	
 	private final static class FrontendWriteListener implements ChannelListener<ConduitStreamSinkChannel> {
 		private final FrontendReadListener readListener;		
-		private Request req;
+		private Request8 req;
 		private StreamConnection streamConnection;
 		private ByteBuffer buffer;
 		
@@ -362,26 +371,40 @@ public final class Layer7RouterBackend {
 				return;
 			}
 			
-			channel.suspendWrites();
+			//channel.suspendWrites();
 			
 			try {
-				if(!req.isBody()) {
+				if(req.isWriteHeader()) {
 					writeOKHeader(channel);
-					return;
+					if(readListener.allClosed) {
+						return;
+					}
 				}
-				final int remaining = buffer.remaining();
-				if(remaining == 0 && !req.isMoreToWrite() && !req.isKeepAlive()) {
+				int remaining = buffer.remaining();
+				final int remainingToWrite = req.remaing_to_write();
+				if(remaining == 0 && remainingToWrite == 0 && !req.isKeepAlive()) {
 						readListener.closeAll();
 						return;
-				}else if(remaining == 0) {
+				}else if(remaining == 0 && remainingToWrite == 0) {
+					if(isDebug)log.debug("Suspending writes");
+					channel.suspendWrites();
+					if(isDebug)log.debug("Resuming reads");
 					streamConnection.getSourceChannel().resumeReads();
 					return;
+				}else if(remaining == 0 && remainingToWrite > 0) {
+					buffer.clear();
+					final int capacity = buffer.capacity();
+					for(int i=0;i<capacity && i<remainingToWrite;i++) {
+						buffer.put((byte) '0');
+					}
+					buffer.flip();
+					remaining = buffer.remaining();
 				}
 				
 				try{
-					long count = channel.write(buffer);
+					int count = channel.write(buffer);
 					boolean flushed = channel.flush();
-					req.inc_writes((int) count);
+					req.incrementBodyBytesWritten(count);
 					readListener.totalWritesToFrontend += count;
 					globalClientWriteBytes.addAndGet(count);
 					if(isDebug) {
@@ -392,12 +415,22 @@ public final class Layer7RouterBackend {
 						if(isDebug)log.debug("pending writes...");
 						channel.resumeWrites();
 						return;
-					}else if(!req.isKeepAlive() && !req.isMoreToWrite()) {
+					}else if(count == remaining && req.getBodyBytesWritten() == req.getContentLength()){
+						if(isDebug)log.debug("Finished writing body.");
+						req.reset();
+						if(isDebug)log.debug("Suspending writes");
+						channel.suspendWrites();
+						if(isDebug)log.debug("Resuming reads.");
+						streamConnection.getSourceChannel().resumeReads();
+						return;
+					}else if(!req.isKeepAlive() && remainingToWrite == 0) {
 						readListener.closeAll();
 						return;
+					}else {
+						if(isDebug)log.debug("Resuming reads.");
+						streamConnection.getSourceChannel().resumeReads();
+						return;
 					}
-					if(isDebug)log.debug("Resuming reads.");
-					streamConnection.getSourceChannel().resumeReads();
 				}catch(IOException e){
 					log.error("Error writing to Frontend (sink) "+((InetSocketAddress)streamConnection.getPeerAddress()).toString(),e);
 					readListener.closeAll();
@@ -416,10 +449,10 @@ public final class Layer7RouterBackend {
 		}
 
 		private void writeOKHeader(final ConduitStreamSinkChannel channel) throws IOException {
-			if(readListener.request.getContent_length() != -1) {
-				String ok_header = "HTTP/1.1 200 OK\r\nContent-Length: "+readListener.request.getContent_length()+"\r\n\r\n";
+			if(readListener.request.getContentLength() != -1) {
+				String ok_header = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: "+readListener.request.getContentLength()+"\r\n\r\n";
 				if(req.isKeepAlive()) {
-					ok_header = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: "+readListener.request.getContent_length()+"\r\n\r\n";
+					ok_header = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: "+readListener.request.getContentLength()+"\r\n\r\n";
 				}
 				if("100-continue".equals(req.getExpect())) {
 					ok_header = "HTTP/1.1 100 Continue\r\n\r\n";
@@ -432,14 +465,7 @@ public final class Layer7RouterBackend {
 				boolean flushed = channel.flush();
 				if(isDebug)log.debug("Wrote "+count+" header bytes from backend to client (flushed: "+flushed+")");
 				globalClientWriteBytes.addAndGet(count);
-				if(readListener.buffer.hasRemaining()) {
-					count = channel.write(readListener.buffer);
-					globalClientWriteBytes.addAndGet(count);
-					req.inc_writes(count);
-					flushed = channel.flush();
-					if(isDebug)log.debug("Wrote "+count+" body bytes from backend to client (flushed: "+flushed+")");
-				}
-				
+				req.setWriteHeader(false);
 			}else {
 				String ok_header = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nHello";
 				if(req.isKeepAlive()) {
@@ -451,113 +477,14 @@ public final class Layer7RouterBackend {
 				int count = channel.write(okBuff);
 				boolean flushed = channel.flush();
 				if(isDebug)log.debug("Wrote "+count+" header bytes from backend to client (flushed: "+flushed+")");
-				req.inc_writes(count);
+				req.incrementBodyBytesWritten(count);
 				globalClientWriteBytes.addAndGet(count);
 				if(!req.isKeepAlive()) {
 					readListener.closeAll();
 				}
 			}
-			readListener.request.setBody(true);;
 			readListener.streamConnection.getSourceChannel().resumeReads();
 		}
-	}
-	
-	private final static class Options {
-		@Option(name = "-listen_port", usage="port")
-		public Integer listen_port = 7180;
-
-		@Override
-		public String toString() {
-			StringBuilder builder = new StringBuilder();
-			builder.append("Options: router_port=").append(listen_port);
-			return builder.toString();
-		}
-	}
-	
-	private static ThreadMXBean getWorkerCpuTimes(final Map<Long, Long> workerCpuTimes) {
-		ThreadMXBean tmxb = ManagementFactory.getThreadMXBean();
-		tmxb.setThreadCpuTimeEnabled(true);
-		
-		workerCpuTimes.put(Thread.currentThread().getId(), tmxb.getThreadCpuTime(Thread.currentThread().getId()));//monitor thyself
-		Thread[] threads = getAllThreads();
-		Arrays.sort(threads, new Comparator<Thread>(){
-			@Override
-			public int compare(Thread o1, Thread o2) {
-				return new Long(o1.getId()).compareTo(new Long(o2.getId()));
-			}});
-		for(Thread thread : threads){
-			workerCpuTimes.put(thread.getId(), tmxb.getThreadCpuTime(thread.getId()));
-		}
-		return tmxb;
-	}
-	
-	private static ThreadGroup rootThreadGroup = null;
-	private final static ThreadGroup getRootThreadGroup( ) {
-	    if ( rootThreadGroup != null )
-	        return rootThreadGroup;
-	    ThreadGroup tg = Thread.currentThread( ).getThreadGroup( );
-	    ThreadGroup ptg;
-	    while ( (ptg = tg.getParent( )) != null )
-	        tg = ptg;
-	    return tg;
-	}
-	
-	private final static Thread[] getAllThreads( ) {
-	    final ThreadGroup root = getRootThreadGroup( );
-	    final ThreadMXBean thbean = ManagementFactory.getThreadMXBean( );
-	    int nAlloc = thbean.getThreadCount( );
-	    int n = 0;
-	    Thread[] threads;
-	    do {
-	        nAlloc *= 2;
-	        threads = new Thread[ nAlloc ];
-	        n = root.enumerate( threads, true );
-	    } while ( n == nAlloc );
-	    return java.util.Arrays.copyOf( threads, n );
-	}
-	
-	private static StringBuilder getMemoryStats(Runtime runtime, MemoryMXBean mmxb) {
-		StringBuilder memoryStats = new StringBuilder();
-		memoryStats.append("Heap ").append(String.format("%04d", mmxb.getHeapMemoryUsage().getMax()/MB))
-		.append("/").append(String.format("%04d", runtime.totalMemory()/MB))
-		.append("/").append(String.format("%04d", mmxb.getHeapMemoryUsage().getUsed()/MB))
-		.append("/").append(String.format("%04d", runtime.freeMemory()/MB)).append(" MB (M/T/U/F)");
-		return memoryStats;
-	}
-
-	private static StringBuilder getCpuStats(ThreadMXBean tmxb, final Map<Long, Long> workerCpuTimes, final double deltaSeconds) {
-		StringBuilder threadStats = new StringBuilder();
-		double totalCpuUsage = 0;
-		for(Iterator<Long> iter = workerCpuTimes.keySet().iterator(); iter.hasNext();){
-			Long threadId = iter.next();
-			long previousCpuTimeNanos = workerCpuTimes.get(threadId);
-			//System.out.println(previousCpuTimeNanos);
-			long currCpuTimeNanos = tmxb.getThreadCpuTime(threadId);//this seems to have a precision of 10 uS
-			double deltaCpuTimeNanos = currCpuTimeNanos - previousCpuTimeNanos;
-			double cpuUsage = ((deltaCpuTimeNanos/(double)1000000000d)/deltaSeconds);
-			totalCpuUsage+=cpuUsage;
-			Thread currThread = getThread(threadId);
-			if(currThread == null){
-				iter.remove();
-				continue;
-			}else if(currThread.getName().matches("(?i).*?(reference|finalizer|dispatcher|reap).*")) {
-				iter.remove();
-				continue;
-			}
-			threadStats.append(" | ").append(currThread.getName()).append(" ")
-			.append(String.format("%03.1f", cpuUsage*(double)100)).append("%");
-			workerCpuTimes.put(threadId, currCpuTimeNanos);
-		}
-		threadStats.append(" | Cpu Total ").append(String.format("%03.1f", totalCpuUsage*(double)100)).append("%");
-		return threadStats;
-	}
-	
-	final private static Thread getThread( final long id ) {
-	    final Thread[] threads = getAllThreads( );
-	    for ( Thread thread : threads )
-	        if ( thread.getId( ) == id )
-	            return thread;
-	    return null;
 	}
 
 }

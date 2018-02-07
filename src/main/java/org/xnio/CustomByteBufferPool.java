@@ -13,6 +13,10 @@ public class CustomByteBufferPool {
 	public static ByteBufferPool allocatePool(int bufferSize) {
 		return ByteBufferPool.subPool(LARGE_DIRECT, bufferSize);
 	}
+	
+	public static void free(ByteBuffer buffer) {
+		LARGE_DIRECT.doFree(buffer);
+	}
 
 	public static void test() throws InterruptedException {
 		List<ByteBuffer> buffers = new ArrayList<>();

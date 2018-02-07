@@ -1,13 +1,15 @@
 import java.io.IOException;
 import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ManagementFactory;
-import java.lang.management.MemoryPoolMXBean;
-import java.lang.management.OperatingSystemMXBean;
+import java.lang.management.MemoryMXBean;
+import java.lang.management.ThreadMXBean;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Deque;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,24 +38,19 @@ import org.xnio.conduits.ConduitStreamSourceChannel;
  * @author royer
  *
  */
-public final class Layer7Router {
+public final class Layer7Router extends Common {
 
 	final static Logger log = Logger.getLogger(Layer7Router.class);
 
+	final static boolean isInfo=log.isInfoEnabled();
+	final static boolean isDebug=log.isDebugEnabled();
+	final static boolean isTrace=log.isTraceEnabled();
+	
 	final static Xnio xnio = Xnio.getInstance();
-	final static OptionMap xnioOptions = OptionMap.builder()
-			.set(org.xnio.Options.ALLOW_BLOCKING, false)
-			.set(org.xnio.Options.RECEIVE_BUFFER, 1024)
-			.set(org.xnio.Options.SEND_BUFFER, 1024)
-			//.set(org.xnio.Options.READ_TIMEOUT, 30000)
-			//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
-			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
-			.set(org.xnio.Options.WORKER_IO_THREADS, 2)
-			.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
-			.set(org.xnio.Options.BACKLOG, 1024*4)
-			.set(org.xnio.Options.KEEP_ALIVE, false)
-			.getMap();
 	static XnioWorker worker;
+	static OptionMap xnioOptions;
+	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
+	static ByteBufferPool pool;
 	
 	final static AtomicInteger totalAccepted = new AtomicInteger();
 	final static AtomicInteger sessionsCount = new AtomicInteger();
@@ -62,15 +59,8 @@ public final class Layer7Router {
 	final static AtomicLong globalBackendReadBytes = new AtomicLong();
 	final static AtomicLong globalClientReadBytes = new AtomicLong();
 
-	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
-	final static ByteBufferPool pool = CustomByteBufferPool.allocatePool(1024);
-	
 	final static Options routerOptions = new Options();
-	
-	final static boolean isInfo=log.isInfoEnabled();
-	final static boolean isDebug=log.isDebugEnabled();
-	final static boolean isTrace=log.isTraceEnabled();
-	
+
 	static InetSocketAddress[] bindAddresses = new InetSocketAddress[1];
 
 	public static void main(String[] args) throws Exception {
@@ -79,6 +69,20 @@ public final class Layer7Router {
 		System.out.println(routerOptions.toString());
 		
 		bindAddresses = new InetSocketAddress[(routerOptions.client_end_ip - routerOptions.client_start_ip)+1];
+
+		pool = CustomByteBufferPool.allocatePool(routerOptions.buffer_size);
+		xnioOptions = OptionMap.builder()
+				.set(org.xnio.Options.ALLOW_BLOCKING, false)
+				.set(org.xnio.Options.RECEIVE_BUFFER, routerOptions.buffer_size)
+				.set(org.xnio.Options.SEND_BUFFER, routerOptions.buffer_size)
+				//.set(org.xnio.Options.READ_TIMEOUT, 30000)
+				//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
+				.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
+				.set(org.xnio.Options.WORKER_IO_THREADS, 2)
+				.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
+				.set(org.xnio.Options.BACKLOG, 1024 * 4)
+				.set(org.xnio.Options.KEEP_ALIVE, false)
+				.getMap();
 
 		worker = xnio.createWorker(xnioOptions);
 		
@@ -152,10 +156,11 @@ public final class Layer7Router {
 		reaper.setName("Idle Connection Reaper");
 		reaper.start();
 		
-		final OperatingSystemMXBean operatingSystemMXBean = ManagementFactory.getOperatingSystemMXBean();
+		final Map <Long, Long> workerCpuTimes = new LinkedHashMap<Long, Long>();
 		final Runtime runtime = Runtime.getRuntime();
-		MemoryPoolMXBean edenBean = ManagementFactory.getMemoryPoolMXBeans().stream().filter(b->"PS Eden Space".equals(b.getName())).findFirst().get();
-		BufferPoolMXBean bufferPoolBean = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream().filter(bb->"direct".equals(bb.getName())).findFirst().get();
+		final BufferPoolMXBean bufferPoolBean = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream().filter(bb->"direct".equals(bb.getName())).findFirst().get();
+		final MemoryMXBean mmxb = ManagementFactory.getMemoryMXBean();
+		final ThreadMXBean tmxb = getWorkerCpuTimes(workerCpuTimes);
 		
 		int acceptedLast = totalAccepted.get();
 		long clientToBackendLast = globalBackendWriteBytes.get();
@@ -165,6 +170,10 @@ public final class Layer7Router {
 		while(true){
 			Thread.sleep(2000);
 			long slept = System.currentTimeMillis() - start;
+			
+			final StringBuilder cpuStats = getCpuStats(tmxb, workerCpuTimes, ((double)slept)/1000d);
+			final StringBuilder memoryStats = getMemoryStats(runtime, mmxb);
+
 			double acceptedPerSec = ((double)totalAccepted.get() - (double)acceptedLast) / ((double)slept/1000d);
 			double clientToBackendPerSec = (globalBackendWriteBytes.get() - clientToBackendLast) / ((double)slept/1000d);
 			String clientToBackendPerSecUnits = "KB";
@@ -182,8 +191,8 @@ public final class Layer7Router {
 			}else {
 				backendToClientPerSec = backendToClientPerSec / 1024f;
 			}
-			final String formatted = String.format("Sess: %,6.1f per/sec, %,7d total, %,6d curr, %,8d FR -> %,d BW, %,d FW <- %,8d BR, in %,7.1f %s/sec, out %,7.1f %s/sec, Load %,1.2f, HeapFree %,5.1f MB, EdenUsed %,4.0f MB, Direct %,4.0f MB", 
-					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), globalClientReadBytes.get(), globalBackendWriteBytes.get(), globalClientWriteBytes.get(), globalBackendReadBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, operatingSystemMXBean.getSystemLoadAverage(), ((float)runtime.freeMemory())/(1024f*1024f), ((float)edenBean.getUsage().getUsed())/(1024f*1024f), ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f));
+			final String formatted = String.format("Sess: %,.1f per/sec, %,d total, %,d curr, %,d FR -> %,d BW, %,d FW <- %,d BR, in %,.1f %s/sec, out %,.1f %s/sec, Direct %,.1f MB, %s, %s", 
+					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), globalClientReadBytes.get(), globalBackendWriteBytes.get(), globalClientWriteBytes.get(), globalBackendReadBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f), memoryStats, cpuStats);
 			if(!formatted.equals(lastFormatted)){
 				System.out.println(formatted);
 			}
@@ -487,9 +496,9 @@ public final class Layer7Router {
 				} catch (CancellationException | IOException e1) {
 					log.error("", e1);
 				}finally{
-					ByteBufferPool.free(buffer);
+					CustomByteBufferPool.free(buffer);
 					if(writeListener.backendReadListener != null){
-						ByteBufferPool.free(writeListener.backendReadListener.buffer);
+						CustomByteBufferPool.free(writeListener.backendReadListener.buffer);
 					}
 				}
 			}
@@ -786,32 +795,6 @@ public final class Layer7Router {
 				//channel.suspendWrites();
 			}
 			
-		}
-	}
-	
-	private final static class Options {
-		@Option(name = "-listen_port", usage="port")
-		public Integer listen_port = 7080;
-		
-		@Option(name = "-backend_host", usage="host")
-		public String backend_host = "192.168.1.150";
-		
-		@Option(name = "-backend_port", usage="port")
-		public Integer backend_port = 80;
-		
-		@Option(name = "-client_base_ip", usage="first three octets of ip address")
-		public String client_base_ip = "192.168.1";
-		
-		@Option(name = "-client_start_ip", usage="port")
-		public Integer client_start_ip = 215;
-		
-		@Option(name = "-client_end_ip", usage="port")
-		public Integer client_end_ip = 255;
-
-		@Override
-		public String toString() {
-			return "Options [listen_port=" + listen_port + ", backend_host=" + backend_host + ", backend_port="
-					+ backend_port + ", client_start_ip=" + client_start_ip + ", client_end_ip=" + client_end_ip + "]";
 		}
 	}
 

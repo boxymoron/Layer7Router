@@ -98,8 +98,7 @@ public final class Request4 {
 		for (int i = 0; i < remaining; i++) {
 		    chars[i] = (char) (buffer.get(i + buffer.position()) & 0xFF);
 		}
-		
-		final CharBuffer cbuff = CharBuffer.wrap(chars);
+
 		int prev=0;
 		//long start2 = System.nanoTime();
 		for(int i=0;i<remaining && prev+2 < remaining;i++) {
@@ -111,19 +110,19 @@ public final class Request4 {
 				if(prev == 0) {
 					uri = new String(chars, prev, i);
 				} else {
-					if(host == null && Arrays.equals(Arrays.copyOfRange(chars, prev, prev+HOST_LEN-1), HOST)) {
+					if(host == null && Arrays.equals(chars, prev, prev+HOST_LEN-1, HOST, 0, HOST_LEN-1)) {
 						final int start = prev+HOST_LEN;
 						host = new String(chars, start, i-start);
-					}else if(connection == null && Arrays.equals(Arrays.copyOfRange(chars, prev, prev+CONNECTION_LEN-1), CONNECTION)) {
+					}else if(connection == null && Arrays.equals(chars, prev, prev+CONNECTION_LEN-1, CONNECTION, 0, CONNECTION_LEN-1)) {
 						final int start = prev+CONNECTION_LEN;
 						connection = new String(chars, start, i-start);
 						if(connection.equals("keep-alive")) {
 							keepalive = true;
 						}
-					}else if(expect == null && Arrays.equals(Arrays.copyOfRange(chars, prev, prev+EXPECT_LEN-1), EXPECT)) {
+					}else if(expect == null && Arrays.equals(chars, prev, prev+EXPECT_LEN-1, EXPECT, 0, EXPECT_LEN-1)) {
 						final int start = prev+EXPECT_LEN;
 						expect = new String(chars, start, i-start);
-					}else if(content_length == -1 && (Arrays.equals(Arrays.copyOfRange(chars, prev, prev+CONTENT_LENGTH_LEN-1), CONTENT_LENGTH) || Arrays.equals(Arrays.copyOfRange(chars, prev, prev+CONTENT_LENGTH_LEN-1), CONTENT_LENGTH2))) {
+					}else if(content_length == -1 && (Arrays.equals(chars, prev, prev+CONTENT_LENGTH_LEN-1, CONTENT_LENGTH, 0, CONTENT_LENGTH_LEN-1) || Arrays.equals(chars, prev, prev+CONTENT_LENGTH_LEN-1, CONTENT_LENGTH2, 0, CONTENT_LENGTH_LEN-1))) {
 						final int start = prev+CONTENT_LENGTH_LEN;
 						//content_length = parseInt(chars, start, i);
 						content_length = Integer.parseInt(new String(chars, start, i-start));
@@ -133,7 +132,7 @@ public final class Request4 {
 						}
 					}
 				}
-				if(i+3 < remaining && cbuff.charAt(i+1) == '\n' && cbuff.charAt(i+2) == '\r' && cbuff.charAt(i+3) == '\n') {
+				if(i+3 < remaining && chars[i+1] == '\n' && chars[i+2] == '\r' && chars[i+3] == '\n') {
 					boundary = i+4;
 					break;
 				}

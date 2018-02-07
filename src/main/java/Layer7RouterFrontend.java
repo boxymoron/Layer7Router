@@ -6,8 +6,6 @@ import java.lang.management.ThreadMXBean;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.Deque;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -20,8 +18,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.log4j.Logger;
+import org.apache.log4j.MDC;
 import org.kohsuke.args4j.CmdLineParser;
-import org.kohsuke.args4j.Option;
 import org.xnio.ByteBufferPool;
 import org.xnio.ChannelListener;
 import org.xnio.CustomByteBufferPool;
@@ -34,59 +32,58 @@ import org.xnio.channels.BoundChannel;
 import org.xnio.conduits.ConduitStreamSinkChannel;
 import org.xnio.conduits.ConduitStreamSourceChannel;
 
+import com.boxymoron.request.Request8;
+
 /**
  * TODO: Look into cpu/thread affinity.
  * @author royer
  *
  */
-public final class Layer7RouterFrontend {
-
+public final class Layer7RouterFrontend extends Common {
+	
 	final static Logger log = Logger.getLogger(Layer7RouterFrontend.class);
-	final private static int MB = 1024*1024;
-
-	final static Xnio xnio = Xnio.getInstance();
-	final static OptionMap xnioOptions = OptionMap.builder()
-			.set(org.xnio.Options.ALLOW_BLOCKING, false)
-			.set(org.xnio.Options.RECEIVE_BUFFER, 1024)
-			.set(org.xnio.Options.SEND_BUFFER, 1024)
-			//.set(org.xnio.Options.READ_TIMEOUT, 30000)
-			//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
-			.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
-			.set(org.xnio.Options.WORKER_IO_THREADS, 2)
-			.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
-			.set(org.xnio.Options.BACKLOG, 1024 * 4)
-			.set(org.xnio.Options.KEEP_ALIVE, false)
-			.getMap();
-	static XnioWorker worker;
-	
-	final static AtomicInteger totalAccepted = new AtomicInteger();
-	final static AtomicInteger sessionsCount = new AtomicInteger();
-	final static AtomicInteger sessionsActive = new AtomicInteger();
-
-	final static AtomicLong globalClientWriteReq = new AtomicLong();
-	final static AtomicLong globalClientWriteBytes = new AtomicLong();
-	final static AtomicLong globalClientWriteRes = new AtomicLong();
-	final static AtomicLong globalBackendReadBytes = new AtomicLong();
-
-	
-	final static AtomicInteger globalReqPerSec = new AtomicInteger();
-
-
-	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
-	static ByteBufferPool pool = CustomByteBufferPool.allocatePool(1024);
-	
-	final static Options routerOptions = new Options();
 	
 	final static boolean isInfo=log.isInfoEnabled();
 	final static boolean isDebug=log.isDebugEnabled();
 	final static boolean isTrace=log.isTraceEnabled();
 	
+	final static AtomicInteger totalAccepted = new AtomicInteger();
+	final static AtomicInteger sessionsCount = new AtomicInteger();
+	final static AtomicInteger sessionsActive = new AtomicInteger();
+	final static AtomicLong globalClientWriteReq = new AtomicLong();
+	final static AtomicLong globalClientWriteBytes = new AtomicLong();
+	final static AtomicLong globalClientWriteRes = new AtomicLong();
+	final static AtomicLong globalBackendReadBytes = new AtomicLong();
+	final static AtomicInteger globalReqPerSec = new AtomicInteger();
+
+	final static Xnio xnio = Xnio.getInstance();
+	static XnioWorker worker;
+	static OptionMap xnioOptions;
+	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
+	static ByteBufferPool pool;
+	
+	final static Options routerOptions = new Options();
+
 	final static Deque<IoFuture<StreamConnection>> futures = new ConcurrentLinkedDeque<>();
 
 	public static void main(String[] args) throws Exception {
 		final CmdLineParser cmdLineParser = new CmdLineParser(routerOptions);
 		cmdLineParser.parseArgument(args);
 		System.out.println(routerOptions.toString());
+		
+		pool = CustomByteBufferPool.allocatePool(routerOptions.buffer_size);
+		xnioOptions = OptionMap.builder()
+				.set(org.xnio.Options.ALLOW_BLOCKING, false)
+				.set(org.xnio.Options.RECEIVE_BUFFER, routerOptions.buffer_size)
+				.set(org.xnio.Options.SEND_BUFFER, routerOptions.buffer_size)
+				//.set(org.xnio.Options.READ_TIMEOUT, 30000)
+				//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
+				.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
+				.set(org.xnio.Options.WORKER_IO_THREADS, 2)
+				.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
+				.set(org.xnio.Options.BACKLOG, 1024 * 4)
+				.set(org.xnio.Options.KEEP_ALIVE, false)
+				.getMap();
 
 		worker = xnio.createWorker(xnioOptions);
 		
@@ -95,7 +92,7 @@ public final class Layer7RouterFrontend {
 			public void run() {
 				while(true) {
 					try {
-						Thread.sleep(500);
+						Thread.sleep(2000);
 						final Iterator<IoFuture<StreamConnection>> iter = futures.iterator();
 						while(iter.hasNext()) {
 							final IoFuture<StreamConnection> fut = iter.next();
@@ -183,12 +180,20 @@ public final class Layer7RouterFrontend {
 
 	private static void run() {
 		final AtomicInteger connections= new AtomicInteger();
-		final String backend_ok = "HTTP/1.1 200 OK\r\nContent-Length: "+routerOptions.payload_bytes+"\r\n\r\n";
 		final StringBuilder sb = new StringBuilder();
-		final String header = "GET / HTTP/1.1\r\nHost: "+routerOptions.backend_host+"\r\nConnection: keep-alive\r\nContent-Length: ";
-		sb.append(header+(routerOptions.payload_bytes - (header.length() + 6))+"\r\n\r\n");
+		final String header = "GET / HTTP/1.1\r\nHost: "+routerOptions.backend_host+"\r\nConnection: "+(routerOptions.keepalive ? "keep-alive" : "close")+"\r\nContent-Length: ";
+		int header_length = header.length();
+		String header_length_str = ""+header_length;
+		sb.append(header).append(routerOptions.payload_bytes - (header_length + header_length_str.length() + 6)).append("\r\n\r\n");
+		if(isDebug) {
+			log.debug("Header length: "+(sb.length() - 4));
+		}
 		while(sb.length() < routerOptions.payload_bytes) {
 			sb.append("0");
+		}
+		if(isDebug) {
+			log.debug("Total length (inc. boundary): "+(sb.length()));
+			log.debug("boundary: "+sb.toString().indexOf("\r\n\r\n"));
 		}
 
 		final String req = sb.toString();
@@ -209,8 +214,10 @@ public final class Layer7RouterFrontend {
 				final InetSocketAddress clientAddr = new InetSocketAddress(routerOptions.client_base_ip+"."+ip, 0);
 				//System.out.println(clientAddr.getAddress().getHostAddress()+":"+clientAddr.getPort()+" Connecting to "+backendAddr);
 				final IoFuture<StreamConnection> future = worker.openStreamConnection(clientAddr, backendAddr, new ChannelListener<StreamConnection> () {
+					StreamConnection streamConnection;
 					@Override
 					public void handleEvent(StreamConnection channel) {
+						this.streamConnection = channel;
 						connections.incrementAndGet();
 						totalAccepted.incrementAndGet();
 						sessionsCount.incrementAndGet();
@@ -225,6 +232,7 @@ public final class Layer7RouterFrontend {
 							public void handleEvent(ConduitStreamSinkChannel c) {
 								channel.getSourceChannel().suspendReads();
 								c.suspendWrites();
+								if(isInfo)MDC.put("channel", streamConnection.hashCode());
 								try {
 									if(!remaining) {
 										buff.put(req.getBytes());
@@ -260,70 +268,84 @@ public final class Layer7RouterFrontend {
 									} catch (IOException e1) {
 										e1.printStackTrace();
 									}
-									
+									if(isInfo)MDC.remove("channel");
 								}
 							}
 						});
 						channel.getSourceChannel().setReadListener(new ChannelListener<ConduitStreamSourceChannel>(){
 							private ByteBuffer readBuff = pool.allocate();
-							int totalReadBodyBytes = 0;
-							int contentLength = 0;
+							private int totalReadBodyBytes = 0;
+							private int contentLength = 0;
+							private Request8 req;
 							{
 								readBuff.clear();
 							}
 							@Override
 							public void handleEvent(ConduitStreamSourceChannel c) {
+								if(!c.isOpen()) {
+									try {
+										channel.close();
+									} catch (IOException e) {
+										e.printStackTrace();
+									}
+									return;
+								}
+								if(isInfo)MDC.put("channel", streamConnection.hashCode());
 								try {
 									int count = c.read(readBuff);
 									readBuff.flip();
 									if(count == -1) {
 										channel.close();
+										ByteBufferPool.free(readBuff);
 										return;
 									}else if(count == 0) {
 										return;
 									}
 									globalBackendReadBytes.addAndGet(count);
-									if(log.isDebugEnabled())log.debug("Read "+count+" bytes from backend:");
-									final String content = StandardCharsets.UTF_8.decode(readBuff).toString();
-									if(log.isDebugEnabled())System.out.println(content);
-									final String[] lines = content.toString().split("\r\n");
-									if(lines.length > 0) {
-										for(String line: lines){
-											String[] header = line.split(":");
-											if(header.length == 2) {
-												if("Content-Length".equals(header[0])) {
-													contentLength = Integer.parseInt(header[1].trim());
-													String body = content.substring(content.lastIndexOf("\r\n\r\n")+4);
-													if(log.isDebugEnabled())log.debug("body: "+body.length()+":\n"+body);
-													totalReadBodyBytes += body.length();
-													if(totalReadBodyBytes == contentLength) {
-														globalClientWriteRes.incrementAndGet();
-														totalReadBodyBytes = 0;
-														c.suspendReads();
-														readBuff.clear();
-														if(log.isDebugEnabled())log.debug("Resuming client writes");
-														channel.getSinkChannel().resumeWrites();
-														return;
-													}
-												}
-											}
-										}
-									}
-									totalReadBodyBytes += count;
-									if(totalReadBodyBytes >= contentLength) {
-										globalClientWriteRes.incrementAndGet();
-										totalReadBodyBytes = 0;
-										c.suspendReads();
-										readBuff.clear();
-										if(log.isDebugEnabled())log.debug("Resuming client writes");
-										channel.getSinkChannel().resumeWrites();
-										return;
-									}else {
-										readBuff.clear();
-										if(log.isDebugEnabled())log.debug("Resuming client reads");
-										c.resumeReads();
+									if(log.isDebugEnabled())log.debug("Read "+count+" bytes from backend");
+
+									if(isDebug) {
+										log.debug("Before parse: "+req);
 									}
 
+									if(req == null) {
+										req = new Request8(readBuff);
+									}else {
+										req.parseRequest(readBuff);
+									}
+
+									if(isDebug) {
+										log.debug("After parse: "+req);
+									}
+
+									if(req.getContentLength() > -1) {
+										if(req.getContentLength() == req.getBodyBytesRead()) {
+											globalClientWriteRes.incrementAndGet();
+											req.reset();
+											c.suspendReads();
+											readBuff.clear();
+											if(log.isDebugEnabled())log.debug("Resuming client writes");
+											channel.getSinkChannel().resumeWrites();
+											return;
+										}else {
+											readBuff.clear();
+											c.resumeReads();
+										}
+									}else {
+										totalReadBodyBytes += count;
+										if(totalReadBodyBytes >= contentLength) {
+											globalClientWriteRes.incrementAndGet();
+											c.suspendReads();
+											readBuff.clear();
+											if(log.isDebugEnabled())log.debug("Resuming client writes");
+											channel.getSinkChannel().resumeWrites();
+											return;
+										}else {
+											readBuff.clear();
+											if(log.isDebugEnabled())log.debug("Resuming client reads");
+											c.resumeReads();
+										}
+									}
 								} catch (IOException e) {
 									e.printStackTrace();
 									try {
@@ -331,6 +353,7 @@ public final class Layer7RouterFrontend {
 									} catch (IOException e1) {
 										e1.printStackTrace();
 									}
+									if(isInfo)MDC.remove("channel");
 								}
 							}
 						});
@@ -413,142 +436,6 @@ public final class Layer7RouterFrontend {
 			
 			//System.out.println("target_util: "+target_util+" globalReqPerSec:"+globalReqPerSec.get()+" reqPerSecLast: "+reqPerSecLast+" sessionsActive:"+currSessionsActive+" r:"+r);
 		}
-	}
-	
-	private final static class Options {
-		@Option(name = "-listen_port", usage="port")
-		public Integer listen_port = 7080;
-		
-		@Option(name = "-backend_host", usage="ip address")
-		public String backend_host = "192.168.1.150";
-		
-		@Option(name = "-backend_port", usage="port")
-		public Integer backend_port = 80;
-		
-		@Option(name = "-client_base_ip", usage="first three octets of ip address")
-		public String client_base_ip = "192.168.1";
-		
-		@Option(name = "-client_start_ip", usage="ip address")
-		public Integer client_start_ip = 80;
-		
-		@Option(name = "-client_end_ip", usage="ip address")
-		public Integer client_end_ip = 120;
-		
-		@Option(name = "-sleep_ms", usage="sleep ms")
-		public Integer sleep_ms = null;
-		
-		@Option(name = "-connections_per_ip", usage="connections per ip (int)")
-		public Integer connections_per_ip = 20000;
-		
-		@Option(name = "-payload_bytes", usage="payload bytes, use powers of 2, no bigger than 32768 (int)")
-		public Integer payload_bytes = 1024;
-		
-		@Option(name = "-damping_factor", usage="damping factor  (double between 0.01 and 1.0)")
-		public Double damping_factor = 0.1d;
-		
-		@Option(name = "-target_util", usage="target utilization  (double between 0.01 and 1.0)")
-		public Double target_util = 0.1d;
-
-		@Override
-		public String toString() {
-			StringBuilder builder = new StringBuilder();
-			builder.append("Options [listen_port=").append(listen_port).append(", backend_host=").append(backend_host)
-					.append(", backend_port=").append(backend_port).append(", client_base_ip=").append(client_base_ip)
-					.append(", client_start_ip=").append(client_start_ip).append(", client_end_ip=")
-					.append(client_end_ip).append(", sleep_ms=").append(sleep_ms).append(", connections_per_ip=")
-					.append(connections_per_ip).append(", payload_bytes=").append(payload_bytes)
-					.append(", damping_factor=").append(damping_factor).append(", target_util=").append(target_util)
-					.append("]");
-			return builder.toString();
-		}
-
-		
-	}
-	
-	private static ThreadMXBean getWorkerCpuTimes(final Map<Long, Long> workerCpuTimes) {
-		ThreadMXBean tmxb = ManagementFactory.getThreadMXBean();
-		tmxb.setThreadCpuTimeEnabled(true);
-		
-		workerCpuTimes.put(Thread.currentThread().getId(), tmxb.getThreadCpuTime(Thread.currentThread().getId()));//monitor thyself
-		Thread[] threads = getAllThreads();
-		Arrays.sort(threads, new Comparator<Thread>(){
-			@Override
-			public int compare(Thread o1, Thread o2) {
-				return new Long(o1.getId()).compareTo(new Long(o2.getId()));
-			}});
-		for(Thread thread : threads){
-			workerCpuTimes.put(thread.getId(), tmxb.getThreadCpuTime(thread.getId()));
-		}
-		return tmxb;
-	}
-	
-	private static ThreadGroup rootThreadGroup = null;
-	private final static ThreadGroup getRootThreadGroup( ) {
-	    if ( rootThreadGroup != null )
-	        return rootThreadGroup;
-	    ThreadGroup tg = Thread.currentThread( ).getThreadGroup( );
-	    ThreadGroup ptg;
-	    while ( (ptg = tg.getParent( )) != null )
-	        tg = ptg;
-	    return tg;
-	}
-	
-	private final static Thread[] getAllThreads( ) {
-	    final ThreadGroup root = getRootThreadGroup( );
-	    final ThreadMXBean thbean = ManagementFactory.getThreadMXBean( );
-	    int nAlloc = thbean.getThreadCount( );
-	    int n = 0;
-	    Thread[] threads;
-	    do {
-	        nAlloc *= 2;
-	        threads = new Thread[ nAlloc ];
-	        n = root.enumerate( threads, true );
-	    } while ( n == nAlloc );
-	    return java.util.Arrays.copyOf( threads, n );
-	}
-	
-	private static StringBuilder getMemoryStats(Runtime runtime, MemoryMXBean mmxb) {
-		StringBuilder memoryStats = new StringBuilder();
-		memoryStats.append("Heap ").append(String.format("%04d", mmxb.getHeapMemoryUsage().getMax()/MB))
-		.append("/").append(String.format("%04d", runtime.totalMemory()/MB))
-		.append("/").append(String.format("%04d", mmxb.getHeapMemoryUsage().getUsed()/MB))
-		.append("/").append(String.format("%04d", runtime.freeMemory()/MB)).append(" MB (M/T/U/F)");
-		return memoryStats;
-	}
-
-	private static StringBuilder getCpuStats(ThreadMXBean tmxb, final Map<Long, Long> workerCpuTimes, final double deltaSeconds) {
-		StringBuilder threadStats = new StringBuilder();
-		double totalCpuUsage = 0;
-		for(Iterator<Long> iter = workerCpuTimes.keySet().iterator(); iter.hasNext();){
-			Long threadId = iter.next();
-			long previousCpuTimeNanos = workerCpuTimes.get(threadId);
-			//System.out.println(previousCpuTimeNanos);
-			long currCpuTimeNanos = tmxb.getThreadCpuTime(threadId);//this seems to have a precision of 10 uS
-			double deltaCpuTimeNanos = currCpuTimeNanos - previousCpuTimeNanos;
-			double cpuUsage = ((deltaCpuTimeNanos/(double)1000000000d)/deltaSeconds);
-			totalCpuUsage+=cpuUsage;
-			Thread currThread = getThread(threadId);
-			if(currThread == null){
-				iter.remove();
-				continue;
-			}else if(currThread.getName().matches("(?i).*?(reference|finalizer|dispatcher|reap).*")) {
-				iter.remove();
-				continue;
-			}
-			threadStats.append(" | ").append(currThread.getName()).append(" ")
-			.append(String.format("%03.1f", cpuUsage*(double)100)).append("%");
-			workerCpuTimes.put(threadId, currCpuTimeNanos);
-		}
-		threadStats.append(" | Cpu Total ").append(String.format("%03.1f", totalCpuUsage*(double)100)).append("%");
-		return threadStats;
-	}
-	
-	final private static Thread getThread( final long id ) {
-	    final Thread[] threads = getAllThreads( );
-	    for ( Thread thread : threads )
-	        if ( thread.getId( ) == id )
-	            return thread;
-	    return null;
 	}
 
 }
