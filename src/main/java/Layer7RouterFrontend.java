@@ -263,11 +263,15 @@ public final class Layer7RouterFrontend extends Common {
 									globalClientWriteReq.incrementAndGet();
 									
 								} catch (IOException e) {
-									e.printStackTrace();
+									if(!routerOptions.disableStacktraces) {
+										e.printStackTrace();
+									}
 									try {
 										channel.close();
 									} catch (IOException e1) {
-										e1.printStackTrace();
+										if(!routerOptions.disableStacktraces) {
+											e1.printStackTrace();
+										}
 									}
 									if(isInfo)MDC.remove("channel");
 								}
@@ -348,13 +352,13 @@ public final class Layer7RouterFrontend extends Common {
 										}
 									}
 								} catch (IOException e) {
-									if(routerOptions.printStacktraces) {
+									if(!routerOptions.disableStacktraces) {
 										e.printStackTrace();
 									}
 									try {
 										channel.close();
 									} catch (IOException e1) {
-										if(routerOptions.printStacktraces) {
+										if(!routerOptions.disableStacktraces) {
 											e1.printStackTrace();
 										}
 									}
