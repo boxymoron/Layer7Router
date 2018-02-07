@@ -297,7 +297,7 @@ public final class Layer7RouterFrontend extends Common {
 							}
 							@Override
 							public void handleEvent(ConduitStreamSourceChannel c) {
-								if(channel.isOpen() || !c.isOpen()) {
+								if(!channel.isOpen() || !c.isOpen()) {
 									try {
 										channel.close();
 									} catch (IOException e) {
