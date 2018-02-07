@@ -364,7 +364,7 @@ public final class Layer7RouterBackend extends Common {
 			
 			if(isInfo)MDC.put("channel", streamConnection.hashCode());
 			
-			if(!streamConnection.getSourceChannel().isOpen()){
+			if(!streamConnection.isOpen() || !streamConnection.getSourceChannel().isOpen()){
 				if(isDebug)log.debug("Frontend channel is closed.");
 				readListener.closeAll();
 				return;
