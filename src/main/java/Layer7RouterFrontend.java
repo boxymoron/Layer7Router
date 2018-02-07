@@ -361,8 +361,10 @@ public final class Layer7RouterFrontend extends Common {
 						channel.setCloseListener(c->{
 							
 						});
-						channel.getSourceChannel().resumeReads();
-						channel.getSinkChannel().resumeWrites();
+						if(!routerOptions.regulate) {
+							channel.getSourceChannel().resumeReads();
+							channel.getSinkChannel().resumeWrites();
+						}
 					}}, new ChannelListener<BoundChannel>() {
 						@Override
 						public void handleEvent(BoundChannel channel) {
@@ -380,7 +382,9 @@ public final class Layer7RouterFrontend extends Common {
 			e1.printStackTrace();
 		}
 		
-		//regulate();
+		if(routerOptions.regulate) {
+			regulate();
+		}
 	}
 
 	private static void regulate() {
