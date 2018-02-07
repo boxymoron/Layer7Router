@@ -231,6 +231,16 @@ public final class Layer7RouterFrontend extends Common {
 							volatile boolean remaining = false;
 							@Override
 							public void handleEvent(ConduitStreamSinkChannel c) {
+								if(!channel.isOpen() || !c.isOpen()) {
+									log.debug("Connection is closed.");
+									try {
+										streamConnection.close();
+									} catch (IOException e) {
+										if(!routerOptions.disableStacktraces) {
+											e.printStackTrace();
+										}
+									}
+								}
 								channel.getSourceChannel().suspendReads();
 								c.suspendWrites();
 								if(isInfo)MDC.put("channel", streamConnection.hashCode());
@@ -287,11 +297,13 @@ public final class Layer7RouterFrontend extends Common {
 							}
 							@Override
 							public void handleEvent(ConduitStreamSourceChannel c) {
-								if(!c.isOpen()) {
+								if(channel.isOpen() || !c.isOpen()) {
 									try {
 										channel.close();
 									} catch (IOException e) {
-										e.printStackTrace();
+										if(!routerOptions.disableStacktraces) {
+											e.printStackTrace();
+										}
 									}
 									return;
 								}
