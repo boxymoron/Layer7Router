@@ -37,9 +37,6 @@ public class Common {
 		@Option(name = "-connections_per_ip", usage="connections per ip (int)")
 		public Integer connections_per_ip = 20000;
 		
-		@Option(name = "-payload_bytes", usage="payload bytes, use powers of 2, no bigger than 32768 (int)")
-		public Integer payload_bytes = 1024;
-		
 		@Option(name = "-damping_factor", usage="damping factor  (double between 0.01 and 1.0)")
 		public Double damping_factor = 0.1d;
 		
@@ -51,6 +48,12 @@ public class Common {
 		
 		@Option(name = "-buffer_size", usage="use powers of two from 256 to 8192 (default 1024)")
 		public int buffer_size = 1024;
+		
+		@Option(name = "-request_bytes", usage="request size in bytes (int) (defaults to -buffer_size)")
+		public Integer request_bytes = buffer_size;
+		
+		@Option(name = "-num_threads", aliases={"-t"}, usage="number of worker threads (default 2)")
+		public int num_threads = 2;
 
 		@Override
 		public String toString() {
@@ -59,9 +62,9 @@ public class Common {
 					.append(", backend_port=").append(backend_port).append(", client_base_ip=").append(client_base_ip)
 					.append(", client_start_ip=").append(client_start_ip).append(", client_end_ip=")
 					.append(client_end_ip).append(", sleep_ms=").append(sleep_ms).append(", connections_per_ip=")
-					.append(connections_per_ip).append(", payload_bytes=").append(payload_bytes)
+					.append(connections_per_ip).append(", request_bytes=").append(request_bytes)
 					.append(", damping_factor=").append(damping_factor).append(", target_util=").append(target_util)
-					.append(", keepalive=").append(keepalive).append(", buffer_size=").append(buffer_size)
+					.append(", keepalive=").append(keepalive).append(", buffer_size=").append(buffer_size).append(", num_threads=").append(num_threads)
 					.append("]");
 			return builder.toString();
 		}

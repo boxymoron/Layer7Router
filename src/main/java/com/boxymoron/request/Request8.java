@@ -41,6 +41,8 @@ public final class Request8 implements HttpRequest {
 				return;
 			} else if(bodyBytesRead == contentLength) {
 				if(isDebug)log.debug("finished reading body\n"+this.toString());
+				String content = StandardCharsets.US_ASCII.decode(buffer).toString();
+				if(isDebug)log.debug("in body: \n"+content);
 				writeBody=true;
 				if(bodyBytesWritten == contentLength) {
 					if(isDebug)log.debug("finished writing body");
@@ -112,7 +114,13 @@ public final class Request8 implements HttpRequest {
 				readHeader = false;
 				readBody = true;
 			}else if(this.boundary + contentLength == remaining) {
-				reset();
+				readHeader = false;
+				readBody = false;
+				writeHeader = true;
+				writeBody = true;
+				buffer.position(this.boundary + contentLength);
+				this.bodyBytesRead = contentLength;
+				this.boundary = -1;
 				return;
 			} else {//this.boundary + content_length < remaining
 				this.boundary = remaining - contentLength;
@@ -298,11 +306,19 @@ public final class Request8 implements HttpRequest {
 		return bodyBytesWritten;
 	}
 
-	public void setBody_bytes_written(int body_bytes_written) {
+	public void setBodyBytesWritten(int body_bytes_written) {
 		this.bodyBytesWritten = body_bytes_written;
 	}
 	
-	public int remaing_to_write() {
+	public int remainingWrites() {
+		if(expect != null) {
+			try {
+				int expect = Integer.parseInt(this.expect);
+				return expect - bodyBytesWritten;
+			}catch(NumberFormatException e) {
+				
+			}
+		}
 		return contentLength - bodyBytesWritten;
 	}
 	

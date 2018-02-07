@@ -79,7 +79,7 @@ public final class Layer7RouterFrontend extends Common {
 				//.set(org.xnio.Options.READ_TIMEOUT, 30000)
 				//.set(org.xnio.Options.WRITE_TIMEOUT, 30000)
 				.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
-				.set(org.xnio.Options.WORKER_IO_THREADS, 2)
+				.set(org.xnio.Options.WORKER_IO_THREADS, routerOptions.num_threads)
 				.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
 				.set(org.xnio.Options.BACKLOG, 1024 * 4)
 				.set(org.xnio.Options.KEEP_ALIVE, false)
@@ -183,12 +183,13 @@ public final class Layer7RouterFrontend extends Common {
 		final StringBuilder sb = new StringBuilder();
 		final String header = "GET / HTTP/1.1\r\nHost: "+routerOptions.backend_host+"\r\nConnection: "+(routerOptions.keepalive ? "keep-alive" : "close")+"\r\nContent-Length: ";
 		int header_length = header.length();
-		String header_length_str = ""+header_length;
-		sb.append(header).append(routerOptions.payload_bytes - (header_length + header_length_str.length() + 6)).append("\r\n\r\n");
+		int content_length = routerOptions.request_bytes-(header_length + 4);
+		String content_length_str = ""+content_length;
+		sb.append(header).append(content_length-content_length_str.length()).append("\r\n\r\n");
 		if(isDebug) {
 			log.debug("Header length: "+(sb.length() - 4));
 		}
-		while(sb.length() < routerOptions.payload_bytes) {
+		while(sb.length() < routerOptions.request_bytes) {
 			sb.append("0");
 		}
 		if(isDebug) {
