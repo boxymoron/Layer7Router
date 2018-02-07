@@ -31,12 +31,12 @@
 		<dependency>
 			<groupId>org.jboss.xnio</groupId>
 			<artifactId>xnio-api</artifactId>
-			<version>3.5.4.Final</version> <!-- or: <version>3.0.9.GA</version> -->
+			<version>3.6.1.Final</version> <!-- or: <version>3.0.9.GA</version> -->
 		</dependency>
 		<dependency>
 			<groupId>org.jboss.xnio</groupId>
 			<artifactId>xnio-nio</artifactId>
-			<version>3.5.4.Final</version> <!-- or: <version>3.0.9.GA</version> -->
+			<version>3.6.1.Final</version> <!-- or: <version>3.0.9.GA</version> -->
 		</dependency>
 		<dependency>
 		    <groupId>args4j</groupId>
