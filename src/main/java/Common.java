@@ -55,7 +55,7 @@ public class Common {
 		@Option(name = "-num_threads", aliases={"-t"}, usage="number of worker threads (default 2)")
 		public int num_threads = 2;
 		
-		@Option(name = "-regulate", aliases={"-t"}, usage="regulate front-end throughput (boolean default false)")
+		@Option(name = "-regulate", usage="regulate front-end throughput (boolean default false)")
 		public boolean regulate = false;
 
 		@Override
