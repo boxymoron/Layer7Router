@@ -73,6 +73,9 @@ public final class Layer7RouterBackend extends Common {
 				.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
 				.set(org.xnio.Options.BACKLOG, 1024 * 4)
 				.set(org.xnio.Options.KEEP_ALIVE, false)
+				.set(org.xnio.Options.TCP_NODELAY, true)
+				.set(org.xnio.Options.CORK, true)
+				.set(org.xnio.Options.REUSE_ADDRESSES, true)
 				.getMap();
 
 		worker = xnio.createWorker(xnioOptions);
