@@ -141,7 +141,7 @@ public final class Request8 implements HttpRequest {
 			return;
 		}
 		if(boundary > 0) {
-			if(boundary < buffer.limit()) {
+			if(boundary <= buffer.limit()) {
 				buffer.position(boundary);
 			}else {
 				log.error("boundary > buffer.limit. boundary: "+boundary+" buffer.limit: "+buffer.limit());
