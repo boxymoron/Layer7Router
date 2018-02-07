@@ -57,6 +57,9 @@ public class Common {
 		
 		@Option(name = "-regulate", usage="regulate front-end throughput (boolean default false)")
 		public boolean regulate = false;
+		
+		@Option(name = "-printStacktraces", usage="print stracktraces (boolean default false)")
+		public boolean printStacktraces = false;
 
 		@Override
 		public String toString() {
@@ -68,7 +71,7 @@ public class Common {
 					.append(connections_per_ip).append(", request_bytes=").append(request_bytes)
 					.append(", damping_factor=").append(damping_factor).append(", target_util=").append(target_util)
 					.append(", keepalive=").append(keepalive).append(", buffer_size=").append(buffer_size).append(", num_threads=").append(num_threads)
-					.append(", regulate=").append(regulate)
+					.append(", regulate=").append(regulate).append(", printStacktraces=").append(printStacktraces)
 					.append("]");
 			return builder.toString();
 		}

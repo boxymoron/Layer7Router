@@ -440,7 +440,9 @@ public final class Layer7RouterBackend extends Common {
 					return;
 				}
 			} catch (Exception e) {
-				log.error("", e);
+				if(routerOptions.printStacktraces) {
+					log.error("", e);
+				}
 				readListener.closeAll();
 				return;
 			} finally {

@@ -348,11 +348,15 @@ public final class Layer7RouterFrontend extends Common {
 										}
 									}
 								} catch (IOException e) {
-									e.printStackTrace();
+									if(routerOptions.printStacktraces) {
+										e.printStackTrace();
+									}
 									try {
 										channel.close();
 									} catch (IOException e1) {
-										e1.printStackTrace();
+										if(routerOptions.printStacktraces) {
+											e1.printStackTrace();
+										}
 									}
 									if(isInfo)MDC.remove("channel");
 								}
