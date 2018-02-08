@@ -27,6 +27,7 @@ import org.xnio.XnioWorker;
 import org.xnio.channels.AcceptingChannel;
 import org.xnio.conduits.ConduitStreamSinkChannel;
 import org.xnio.conduits.ConduitStreamSourceChannel;
+import org.xnio.nio.WorkerThreadPrioritySetter;
 
 import com.boxymoron.request.Request8;
 
@@ -79,6 +80,7 @@ public final class Layer7RouterBackend extends Common {
 				.getMap();
 
 		worker = xnio.createWorker(xnioOptions);
+		WorkerThreadPrioritySetter.setAcceptThreadPriority(worker, Thread.MAX_PRIORITY);
 
 		final Deque<FrontendReadListener> readListeners = new ConcurrentLinkedDeque<>();
 
