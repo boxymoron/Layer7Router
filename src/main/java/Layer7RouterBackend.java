@@ -408,7 +408,10 @@ public final class Layer7RouterBackend extends Common {
 				
 				try{
 					int count = channel.write(buffer);
-					boolean flushed = channel.flush();
+					boolean flushed = false;
+					if(routerOptions.flush) {
+						flushed = channel.flush();
+					}
 					req.incrementBodyBytesWritten(count);
 					readListener.totalWritesToFrontend += count;
 					globalClientWriteBytes.addAndGet(count);
@@ -469,7 +472,10 @@ public final class Layer7RouterBackend extends Common {
 				okBuff.put(ok_header.getBytes());
 				okBuff.flip();
 				int count = channel.write(okBuff);
-				boolean flushed = channel.flush();
+				boolean flushed=false;
+				if(routerOptions.flush) {
+					flushed = channel.flush();
+				}
 				if(isDebug)log.debug("Wrote "+count+" header bytes from backend to client (flushed: "+flushed+")");
 				globalClientWriteBytes.addAndGet(count);
 				req.setWriteHeader(false);
@@ -482,7 +488,10 @@ public final class Layer7RouterBackend extends Common {
 				okBuff.put(ok_header.getBytes());
 				okBuff.flip();
 				int count = channel.write(okBuff);
-				boolean flushed = channel.flush();
+				boolean flushed = false;
+				if(routerOptions.flush) {
+					flushed = channel.flush();
+				}
 				if(isDebug)log.debug("Wrote "+count+" header bytes from backend to client (flushed: "+flushed+")");
 				req.incrementBodyBytesWritten(count);
 				globalClientWriteBytes.addAndGet(count);

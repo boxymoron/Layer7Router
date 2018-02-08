@@ -256,7 +256,10 @@ public final class Layer7RouterFrontend extends Common {
 
 									int pos = buff.position();
 									int count = c.write(buff);
-									boolean flushed = c.flush();
+									boolean flushed = false;
+									if(routerOptions.flush) {
+										flushed = c.flush();
+									}
 									buff.position(pos + count);
 									if(log.isDebugEnabled())log.debug("Wrote "+count+" bytes. (flushed: "+flushed+")"+buff);
 									if(buff.remaining() == 0) {

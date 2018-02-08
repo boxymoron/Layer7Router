@@ -60,6 +60,9 @@ public class Common {
 		
 		@Option(name = "-disableStacktraces", usage="disable stracktraces (boolean default false)")
 		public boolean disableStacktraces = false;
+		
+		@Option(name = "-flush", usage="flush writes (boolean default false)")
+		public boolean flush = false;
 
 		@Override
 		public String toString() {
@@ -71,7 +74,7 @@ public class Common {
 					.append(connections_per_ip).append(", request_bytes=").append(request_bytes)
 					.append(", damping_factor=").append(damping_factor).append(", target_util=").append(target_util)
 					.append(", keepalive=").append(keepalive).append(", buffer_size=").append(buffer_size).append(", num_threads=").append(num_threads)
-					.append(", regulate=").append(regulate).append(", disableStacktraces=").append(disableStacktraces)
+					.append(", regulate=").append(regulate).append(", disableStacktraces=").append(disableStacktraces).append(", flush=").append(flush)
 					.append("]");
 			return builder.toString();
 		}

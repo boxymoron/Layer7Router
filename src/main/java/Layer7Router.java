@@ -356,7 +356,10 @@ public final class Layer7Router extends Common {
 				//globalClientWriteBytes.addAndGet(written);
 				//totalWritesToFrontend += written;
 				
-				boolean flushed = streamConnection.getSinkChannel().flush();
+				boolean flushed = false;
+				if(routerOptions.flush) {
+					flushed = streamConnection.getSinkChannel().flush();
+				}
 				if(isDebug)log.debug("Wrote HTTP/1.1 200 OK to frontend (sink) (flushed: "+flushed+")");
 				writeHeaders = false;
 				buffer.clear();
@@ -629,7 +632,10 @@ public final class Layer7Router extends Common {
 				//System.out.println(Buffers.createDumper(buffer, 1, 4).toString());
 				final ConduitStreamSinkChannel sink = frontendReadListener.future.get().getSinkChannel();
 				while((backendWriteBytes = sink.write(buffer)) > 0l){//write to backend
-					boolean flushed = sink.flush();
+					boolean flushed = false;
+					if(routerOptions.flush) {
+						flushed = sink.flush();
+					}
 					totalWritten += backendWriteBytes;
 					if(isDebug)log.debug("Wrote "+backendWriteBytes+" header bytes to Backend (flushed: "+flushed+") Remaining: "+(remaining - totalWritten));
 				}
@@ -690,7 +696,10 @@ public final class Layer7Router extends Common {
 
 				if(isDebug)log.debug(buffer.toString());
 				while((backendWriteBytes = channel.write(buffer)) > 0){
-					boolean flushed = channel.flush();
+					boolean flushed = false;
+					if(routerOptions.flush) {
+						flushed = channel.flush();
+					}
 					totalBackendWriteBytes+=backendWriteBytes;
 					if(isDebug)log.debug("Wrote "+backendWriteBytes+" non-header bytes to Backend (flushed: "+flushed+"). Remaining: "+(remaining-backendWriteBytes));
 					frontendReadListener.totalWritesToBackend += backendWriteBytes;
@@ -769,7 +778,10 @@ public final class Layer7Router extends Common {
 				}
 				try{
 					long count = channel.write(backendReadListener.buffer);
-					boolean flushed = channel.flush();
+					boolean flushed = false;
+					if(routerOptions.flush) {
+						flushed = channel.flush();
+					}
 					if(isDebug)log.debug("Wrote "+count+" bytes from backend to client (flushed: "+flushed+")");
 					readListener.totalWritesToFrontend += count;
 					globalClientWriteBytes.addAndGet(count);
