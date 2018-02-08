@@ -1,2 +1,10 @@
 #!/bin/bash
-for i in `seq 215 255`; do sudo ifconfig enp0s3:$i 192.168.1.$i up ; done
+
+INTERFACE_NAME="enp0s3"
+BASE_IP=192.168.1
+START_OCTET=215
+END_OCTET=255
+
+for i in `seq $START_OCTET $END_OCTET`; do 
+	sudo ifconfig $INTERFACE_NAME:$i $BASE_IP.$i up ; 
+done

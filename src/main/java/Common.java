@@ -25,10 +25,10 @@ public class Common {
 		@Option(name = "-client_base_ip", usage="first three octets of ip address")
 		public String client_base_ip = "127.0.0";
 		
-		@Option(name = "-client_start_ip", usage="port")
+		@Option(name = "-client_start_ip", usage="last ip address octet (int between 1 and 255)")
 		public Integer client_start_ip = 1;
 		
-		@Option(name = "-client_end_ip", usage="port")
+		@Option(name = "-client_end_ip", usage="last ip address octet (int between 1 and 255)")
 		public Integer client_end_ip = 1;
 		
 		@Option(name = "-sleep_ms", usage="sleep ms")
