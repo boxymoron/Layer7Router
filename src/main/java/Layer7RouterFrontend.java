@@ -406,6 +406,11 @@ public final class Layer7RouterFrontend extends Common {
 		}
 		
 		if(routerOptions.regulate) {
+			try {
+				Thread.sleep(30000);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
 			regulate();
 		}
 	}
@@ -416,14 +421,14 @@ public final class Layer7RouterFrontend extends Common {
 		double max_target_util=routerOptions.target_util;
 		while(true) {
 			try {
-				Thread.sleep(2000);
+				Thread.sleep(30);
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
 			int count=0;
 			if(globalReqPerSec.get() > maxReqPerSec) {
 				maxReqPerSec = globalReqPerSec.get();
-				max_target_util=routerOptions.target_util;
+				max_target_util += 0.001;
 			}
 			final Iterator<IoFuture<StreamConnection>> iter = futures.iterator();
 			if(globalReqPerSec.get() < max_target_util){
@@ -433,8 +438,8 @@ public final class Layer7RouterFrontend extends Common {
 			}else {
 				routerOptions.target_util -= 0.0015d;
 			}
-			if(routerOptions.target_util <= 0.001) {
-				routerOptions.target_util = 0.001;
+			if(routerOptions.target_util <= 0.0001) {
+				routerOptions.target_util = 0.0001;
 			}
 			double currSessionsActive = ((double)sessionsCount.get()) * routerOptions.target_util;
 			sessionsActive.set((int)currSessionsActive);
@@ -443,9 +448,6 @@ public final class Layer7RouterFrontend extends Common {
 				final IoFuture<StreamConnection> fut = iter.next();
 				if(IoFuture.Status.DONE.equals(fut.getStatus())){
 					try {
-						if(routerOptions.sleep_ms != null) {
-							Thread.sleep(routerOptions.sleep_ms);
-						}
 						if(((double)count++) % r < 1d) {
 							fut.get().getSinkChannel().resumeWrites();
 						}else {
@@ -455,8 +457,6 @@ public final class Layer7RouterFrontend extends Common {
 					} catch (CancellationException e) {
 						e.printStackTrace();
 					} catch (IOException e) {
-						e.printStackTrace();
-					} catch (InterruptedException e) {
 						e.printStackTrace();
 					}
 				}
