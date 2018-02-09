@@ -421,29 +421,28 @@ public final class Layer7RouterFrontend extends Common {
 		double max_target_util=routerOptions.target_util;
 		while(true) {
 			try {
-				Thread.sleep(30);
+				Thread.sleep(2000);
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
 			int count=0;
 			if(globalReqPerSec.get() > maxReqPerSec) {
 				maxReqPerSec = globalReqPerSec.get();
-				max_target_util += 0.001;
+				max_target_util=routerOptions.target_util+0.001d;
 			}
-			final Iterator<IoFuture<StreamConnection>> iter = futures.iterator();
-			if(globalReqPerSec.get() < max_target_util){
-				routerOptions.target_util = max_target_util;
-			}else if(globalReqPerSec.get() >= reqPerSecLast) {
+
+			if(globalReqPerSec.get() >= reqPerSecLast) {
 				routerOptions.target_util += 0.001d;
 			}else {
 				routerOptions.target_util -= 0.0015d;
 			}
-			if(routerOptions.target_util <= 0.0001) {
+			if(routerOptions.target_util < 0.0001) {
 				routerOptions.target_util = 0.0001;
 			}
 			double currSessionsActive = ((double)sessionsCount.get()) * routerOptions.target_util;
 			sessionsActive.set((int)currSessionsActive);
 			double r = ((double)sessionsCount.get())/currSessionsActive;
+			final Iterator<IoFuture<StreamConnection>> iter = futures.iterator();
 			while(iter.hasNext()) {
 				final IoFuture<StreamConnection> fut = iter.next();
 				if(IoFuture.Status.DONE.equals(fut.getStatus())){
@@ -453,7 +452,7 @@ public final class Layer7RouterFrontend extends Common {
 						}else {
 							fut.get().getSinkChannel().suspendWrites();
 						}
-						reqPerSecLast = globalReqPerSec.get();
+						
 					} catch (CancellationException e) {
 						e.printStackTrace();
 					} catch (IOException e) {
@@ -461,7 +460,7 @@ public final class Layer7RouterFrontend extends Common {
 					}
 				}
 			}
-			
+			reqPerSecLast = globalReqPerSec.get();
 			//System.out.println("target_util: "+target_util+" globalReqPerSec:"+globalReqPerSec.get()+" reqPerSecLast: "+reqPerSecLast+" sessionsActive:"+currSessionsActive+" r:"+r);
 		}
 	}
