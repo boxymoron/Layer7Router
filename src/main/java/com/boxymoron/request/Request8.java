@@ -36,13 +36,17 @@ public final class Request8 implements HttpRequest {
 		if(boundary != -1) {
 			bodyBytesRead += buffer.remaining();
 			if(bodyBytesRead < contentLength) {
-				String content = StandardCharsets.US_ASCII.decode(buffer).toString();
-				if(isDebug)log.debug("in body: \n"+content);
+				if(isDebug) {
+					String content = StandardCharsets.US_ASCII.decode(buffer).toString();
+					if(isDebug)log.debug("in body: \n"+content);
+				}
 				return;
 			} else if(bodyBytesRead == contentLength) {
-				if(isDebug)log.debug("finished reading body\n"+this.toString());
-				String content = StandardCharsets.US_ASCII.decode(buffer).toString();
-				if(isDebug)log.debug("in body: \n"+content);
+				if(isDebug) {
+					log.debug("finished reading body\n"+this.toString());
+					final String content = StandardCharsets.US_ASCII.decode(buffer).toString();
+					if(isDebug)log.debug("in body: \n"+content);
+				}
 				writeBody=true;
 				if(bodyBytesWritten == contentLength) {
 					if(isDebug)log.debug("finished writing body");
@@ -54,7 +58,7 @@ public final class Request8 implements HttpRequest {
 				return;
 			} else if (bodyBytesRead > contentLength){
 				int delta = contentLength - bodyBytesRead;
-				if(delta != 0 && log.isDebugEnabled()) {
+				if(delta != 0 && isDebug) {
 					log.warn("Delta: "+delta);
 					int pos = buffer.position();
 					String content = StandardCharsets.US_ASCII.decode(buffer).toString();
