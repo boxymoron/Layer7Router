@@ -210,7 +210,7 @@ public final class Layer7RouterFrontend extends Common {
 						//System.out.println("Connections: "+connections.get());
 						//System.out.println(addr+" Connected to "+backendAddr);
 						channel.getSinkChannel().setWriteListener(new ChannelListener<ConduitStreamSinkChannel>(){
-							final ByteBuffer buff = ByteBuffer.allocate(req_arr.length);
+							final ByteBuffer buff = ByteBuffer.allocateDirect(req_arr.length);
 							volatile boolean remaining = false;
 							@Override
 							public void handleEvent(ConduitStreamSinkChannel c) {
