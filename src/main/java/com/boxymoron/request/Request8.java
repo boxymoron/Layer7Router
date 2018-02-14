@@ -157,7 +157,7 @@ public final class Request8 implements HttpRequest {
 	}
 
 	private final int setURI(final String content) {
-		int uriIdx = content.indexOf("\r\n");
+		int uriIdx = content.indexOf("\r\n", Math.min(content.length(), "GET HTTP1.1".length()));
 		if(uriIdx > -1) {
 			uri = content.substring(0, uriIdx);
 		}
@@ -169,7 +169,7 @@ public final class Request8 implements HttpRequest {
 		if(content_length2Idx > -1) {
 			for(int i=content_length2Idx+18;i<length;i++) {
 				if(content.charAt(i) == '\r') {
-					contentLength = Integer.parseInt(content.substring(content_length2Idx+18, i));
+					contentLength = parseInt(content.substring(content_length2Idx+18, i));
 					break;
 				}
 			}
@@ -182,13 +182,23 @@ public final class Request8 implements HttpRequest {
 		if(content_lengthIdx > -1) {
 			for(int i=content_lengthIdx+18;i<length;i++) {
 				if(content.charAt(i) == '\r') {
-					contentLength = Integer.parseInt(content.substring(content_lengthIdx+18, i));
+					contentLength = parseInt(content.substring(content_lengthIdx+18, i));
 					break;
 				}
 			}
 		}
 		return content_lengthIdx;
 	}
+
+	//Don't use this in prod. This is for benchmarking only!
+	final private static int parseInt(final String s ) {
+	    int num = 0;
+	    final int len  = s.length( );
+	    for(int i=0; i < len; i++) {
+	    		num = (10 * num) + (s.charAt(i) - '0');
+	    }
+	    return num;
+	} 
 
 	private final int setExpects(final String content, final int length) {
 		final int expectIdx = content.indexOf("\r\nExpect: ");
@@ -324,7 +334,7 @@ public final class Request8 implements HttpRequest {
 	public int remainingWrites() {
 		if(expect != null) {
 			try {
-				int expect = Integer.parseInt(this.expect);
+				int expect = parseInt(this.expect);
 				return expect - bodyBytesWritten;
 			}catch(NumberFormatException e) {
 				

@@ -180,25 +180,7 @@ public final class Layer7RouterFrontend extends Common {
 
 	private static void run() {
 		final AtomicInteger connections= new AtomicInteger();
-		final StringBuilder sb = new StringBuilder();
-		final String header = "GET / HTTP/1.1\r\nHost: "+routerOptions.backend_host+"\r\nConnection: "+(routerOptions.keepalive ? "keep-alive" : "close")+"\r\nContent-Length: ";
-		int header_length = header.length();
-		int content_length = routerOptions.request_bytes-(header_length + 4);
-		String content_length_str = ""+content_length;
-		sb.append(header).append(content_length-content_length_str.length()).append("\r\n\r\n");
-		if(isDebug) {
-			log.debug("Header length: "+(sb.length() - 4));
-		}
-		while(sb.length() < routerOptions.request_bytes) {
-			sb.append("0");
-		}
-		if(isDebug) {
-			log.debug("Total length (inc. boundary): "+(sb.length()));
-			log.debug("boundary: "+sb.toString().indexOf("\r\n\r\n"));
-		}
-
-		final String req = sb.toString();
-		final byte[] req_arr = req.getBytes();
+		final byte[] req_arr = getReqBytes();
 		//if(log.isDebugEnabled())log.debug("req: "+req.length()+":\n"+req);
 		final InetSocketAddress backendAddr = new InetSocketAddress(routerOptions.backend_host, routerOptions.backend_port);
 		final int total_conns = (routerOptions.client_end_ip-routerOptions.client_start_ip) * routerOptions.connections_per_ip;
@@ -416,6 +398,29 @@ public final class Layer7RouterFrontend extends Common {
 			}
 			regulate();
 		}
+	}
+
+	private static byte[] getReqBytes() {
+		final StringBuilder sb = new StringBuilder();
+		final String header = "GET / HTTP/1.1\r\nHost: "+routerOptions.backend_host+"\r\nConnection: "+(routerOptions.keepalive ? "keep-alive" : "close")+"\r\nContent-Length: ";
+		final int header_length = header.length();
+		final int content_length = routerOptions.request_bytes-(header_length + 4);
+		final String content_length_str = ""+content_length;
+		sb.append(header).append(content_length-content_length_str.length()).append("\r\n\r\n");
+		if(isDebug) {
+			log.debug("Header length: "+(sb.length() - 4));
+		}
+		while(sb.length() < routerOptions.request_bytes) {
+			sb.append("0");
+		}
+		if(isDebug) {
+			log.debug("Total length (inc. boundary): "+(sb.length()));
+			log.debug("boundary: "+sb.toString().indexOf("\r\n\r\n"));
+		}
+
+		final String req = sb.toString();
+		final byte[] req_arr = req.getBytes();
+		return req_arr;
 	}
 
 	private static void regulate() {
