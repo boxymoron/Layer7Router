@@ -46,7 +46,7 @@ public class Common {
 		@Option(name = "-keepalive", usage="use keep-alive  (boolean)")
 		public boolean keepalive = false;
 		
-		@Option(name = "-buffer_size", usage="use powers of two from 256 to 8192 (default 1024)")
+		@Option(name = "-buffer_size", usage="use powers of two (default 1024)")
 		public int buffer_size = 1024;
 		
 		@Option(name = "-request_bytes", usage="request size in bytes (int) (defaults to -buffer_size)")

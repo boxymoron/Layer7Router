@@ -233,7 +233,6 @@ public final class Layer7RouterBackend extends Common {
 			if(isDebug)MDC.put("channel", streamConnection.hashCode());
 			if(!streamConnection.isOpen()|| !frontendChannel.isOpen()){
 				if(isDebug)log.debug("Frontend channel is closed.");
-				ByteBufferPool.free(buffer);
 				closeAll();
 				return;
 			}
@@ -425,6 +424,10 @@ public final class Layer7RouterBackend extends Common {
 						return;
 					}else if(count == remaining && req.getBodyBytesWritten() == req.getContentLength()){
 						if(isDebug)log.debug("Finished writing body.");
+						if(!req.isKeepAlive()) {
+							readListener.closeAll();
+							return;
+						}
 						req.reset();
 						if(isDebug)log.debug("Suspending writes");
 						channel.suspendWrites();

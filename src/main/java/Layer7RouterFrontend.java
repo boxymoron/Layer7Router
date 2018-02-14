@@ -198,10 +198,11 @@ public final class Layer7RouterFrontend extends Common {
 		}
 
 		final String req = sb.toString();
+		final byte[] req_arr = req.getBytes();
 		//if(log.isDebugEnabled())log.debug("req: "+req.length()+":\n"+req);
 		final InetSocketAddress backendAddr = new InetSocketAddress(routerOptions.backend_host, routerOptions.backend_port);
 		final int total_conns = (routerOptions.client_end_ip-routerOptions.client_start_ip) * routerOptions.connections_per_ip;
-		CountDownLatch latch = new CountDownLatch(total_conns);
+		final CountDownLatch latch = new CountDownLatch(total_conns);
 		for(int ip=routerOptions.client_start_ip; ip<=routerOptions.client_end_ip;ip++) {
 			for(int port=0; port<routerOptions.connections_per_ip;port++) {
 				if(routerOptions.sleep_ms != null) {
@@ -227,7 +228,7 @@ public final class Layer7RouterFrontend extends Common {
 						//System.out.println("Connections: "+connections.get());
 						//System.out.println(addr+" Connected to "+backendAddr);
 						channel.getSinkChannel().setWriteListener(new ChannelListener<ConduitStreamSinkChannel>(){
-							final ByteBuffer buff = ByteBuffer.allocate(req.getBytes().length);
+							final ByteBuffer buff = ByteBuffer.allocate(req_arr.length);
 							volatile boolean remaining = false;
 							@Override
 							public void handleEvent(ConduitStreamSinkChannel c) {
@@ -246,12 +247,14 @@ public final class Layer7RouterFrontend extends Common {
 								if(isInfo)MDC.put("channel", streamConnection.hashCode());
 								try {
 									if(!remaining) {
-										buff.put(req.getBytes());
+										buff.put(req_arr);
 										buff.flip();
-										final String header = StandardCharsets.UTF_8.decode(buff).toString();
-										buff.rewind();
-										if(log.isDebugEnabled())log.debug("Writing Request: \n"+header);
-										if(log.isDebugEnabled())log.debug(buff);
+										if(log.isDebugEnabled()) {
+											final String header = StandardCharsets.UTF_8.decode(buff).toString();
+											buff.rewind();
+											log.debug("Writing Request: \n"+header);
+											log.debug(buff);
+										}
 									}
 
 									int pos = buff.position();
@@ -416,21 +419,14 @@ public final class Layer7RouterFrontend extends Common {
 	}
 
 	private static void regulate() {
-		int maxReqPerSec = globalReqPerSec.get();
 		int reqPerSecLast = globalReqPerSec.get();//damped avg
-		double max_target_util=routerOptions.target_util;
 		while(true) {
 			try {
 				Thread.sleep(2000);
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
-			int count=0;
-			if(globalReqPerSec.get() > maxReqPerSec) {
-				maxReqPerSec = globalReqPerSec.get();
-				max_target_util=routerOptions.target_util+0.001d;
-			}
-
+			
 			if(globalReqPerSec.get() >= reqPerSecLast) {
 				routerOptions.target_util += 0.001d;
 			}else {
@@ -443,6 +439,7 @@ public final class Layer7RouterFrontend extends Common {
 			sessionsActive.set((int)currSessionsActive);
 			double r = ((double)sessionsCount.get())/currSessionsActive;
 			final Iterator<IoFuture<StreamConnection>> iter = futures.iterator();
+			int count=0;
 			while(iter.hasNext()) {
 				final IoFuture<StreamConnection> fut = iter.next();
 				if(IoFuture.Status.DONE.equals(fut.getStatus())){
