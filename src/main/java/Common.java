@@ -63,6 +63,9 @@ public class Common {
 		
 		@Option(name = "-flush", usage="flush writes (boolean default false)")
 		public boolean flush = false;
+		
+		@Option(name = "-backlog", usage="backlog (default 64K)")
+		public int backlog = 1024 * 64;
 
 		@Override
 		public String toString() {
@@ -75,6 +78,7 @@ public class Common {
 					.append(", damping_factor=").append(damping_factor).append(", target_util=").append(target_util)
 					.append(", keepalive=").append(keepalive).append(", buffer_size=").append(buffer_size).append(", num_threads=").append(num_threads)
 					.append(", regulate=").append(regulate).append(", disableStacktraces=").append(disableStacktraces).append(", flush=").append(flush)
+					.append(", backlog=").append(backlog)
 					.append("]");
 			return builder.toString();
 		}

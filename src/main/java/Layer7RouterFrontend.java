@@ -81,7 +81,7 @@ public final class Layer7RouterFrontend extends Common {
 				.set(org.xnio.Options.USE_DIRECT_BUFFERS, true)
 				.set(org.xnio.Options.WORKER_IO_THREADS, routerOptions.num_threads)
 				.set(org.xnio.Options.SPLIT_READ_WRITE_THREADS, false)
-				.set(org.xnio.Options.BACKLOG, 1024 * 4)
+				.set(org.xnio.Options.BACKLOG, routerOptions.backlog)
 				.set(org.xnio.Options.KEEP_ALIVE, false)
 				.getMap();
 
@@ -181,7 +181,7 @@ public final class Layer7RouterFrontend extends Common {
 	private static void run() {
 		final AtomicInteger connections= new AtomicInteger();
 		final byte[] req_arr = getReqBytes();
-		//if(log.isDebugEnabled())log.debug("req: "+req.length()+":\n"+req);
+		//if(isDebug)log.debug("req: "+req.length()+":\n"+req);
 		final InetSocketAddress backendAddr = new InetSocketAddress(routerOptions.backend_host, routerOptions.backend_port);
 		final int total_conns = (routerOptions.client_end_ip-routerOptions.client_start_ip) * routerOptions.connections_per_ip;
 		final CountDownLatch latch = new CountDownLatch(total_conns);
@@ -211,11 +211,11 @@ public final class Layer7RouterFrontend extends Common {
 						//System.out.println(addr+" Connected to "+backendAddr);
 						channel.getSinkChannel().setWriteListener(new ChannelListener<ConduitStreamSinkChannel>(){
 							final ByteBuffer buff = ByteBuffer.allocateDirect(req_arr.length);
-							volatile boolean remaining = false;
+							volatile boolean writesRemaining = false;
 							@Override
 							public void handleEvent(ConduitStreamSinkChannel c) {
 								if(!channel.isOpen() || !c.isOpen()) {
-									log.debug("Connection is closed.");
+									if(isDebug)log.debug("Connection is closed.");
 									try {
 										streamConnection.close();
 									} catch (IOException e) {
@@ -223,15 +223,14 @@ public final class Layer7RouterFrontend extends Common {
 											e.printStackTrace();
 										}
 									}
+									return;
 								}
-								channel.getSourceChannel().suspendReads();
-								c.suspendWrites();
 								if(isInfo)MDC.put("channel", streamConnection.hashCode());
 								try {
-									if(!remaining) {
+									if(!writesRemaining) {
 										buff.put(req_arr);
 										buff.flip();
-										if(log.isDebugEnabled()) {
+										if(isDebug) {
 											final String header = StandardCharsets.UTF_8.decode(buff).toString();
 											buff.rewind();
 											log.debug("Writing Request: \n"+header);
@@ -239,27 +238,30 @@ public final class Layer7RouterFrontend extends Common {
 										}
 									}
 
-									int pos = buff.position();
-									int count = c.write(buff);
+									final int remaining = buff.remaining();
+									final int pos = buff.position();
+									final int count = c.write(buff);
 									boolean flushed = false;
 									if(routerOptions.flush) {
 										flushed = c.flush();
 									}
+									if(count != remaining) {
+										throw new RuntimeException("hmm");
+									}
 									buff.position(pos + count);
-									if(log.isDebugEnabled())log.debug("Wrote "+count+" bytes. (flushed: "+flushed+")"+buff);
+									if(isDebug)log.debug("Wrote "+count+" bytes. (flushed: "+flushed+")"+buff);
 									if(buff.remaining() == 0) {
 										c.suspendWrites();
 										buff.clear();
-										remaining = false;
-										if(log.isDebugEnabled())log.debug("Finished sending request. Resuming Reads.");
+										writesRemaining = false;
+										if(isDebug)log.debug("Finished sending request. Resuming Reads.");
 										channel.getSourceChannel().resumeReads();
 									}else {
-										remaining = true;
-										c.resumeWrites();
+										writesRemaining = true;
+										//c.resumeWrites();
 									}
 									globalClientWriteBytes.addAndGet(count);
 									globalClientWriteReq.incrementAndGet();
-									
 								} catch (IOException e) {
 									if(!routerOptions.disableStacktraces) {
 										e.printStackTrace();
@@ -301,13 +303,13 @@ public final class Layer7RouterFrontend extends Common {
 									readBuff.flip();
 									if(count == -1) {
 										channel.close();
-										ByteBufferPool.free(readBuff);
+										CustomByteBufferPool.free(readBuff);
 										return;
 									}else if(count == 0) {
 										return;
 									}
 									globalBackendReadBytes.addAndGet(count);
-									if(log.isDebugEnabled())log.debug("Read "+count+" bytes from backend");
+									if(isDebug)log.debug("Read "+count+" bytes from backend");
 
 									if(isDebug) {
 										log.debug("Before parse: "+req);
@@ -324,31 +326,24 @@ public final class Layer7RouterFrontend extends Common {
 									}
 
 									if(req.getContentLength() > -1) {
-										if(req.getContentLength() == req.getBodyBytesRead()) {
+										readBuff.clear();
+										if(!req.isMoreToRead()) {
 											globalClientWriteRes.incrementAndGet();
 											req.reset();
 											c.suspendReads();
-											readBuff.clear();
-											if(log.isDebugEnabled())log.debug("Resuming client writes");
+											if(isDebug)log.debug("Resuming client writes");
 											channel.getSinkChannel().resumeWrites();
 											return;
-										}else {
-											readBuff.clear();
-											c.resumeReads();
 										}
 									}else {
+										readBuff.clear();
 										totalReadBodyBytes += count;
 										if(totalReadBodyBytes >= contentLength) {
 											globalClientWriteRes.incrementAndGet();
 											c.suspendReads();
-											readBuff.clear();
-											if(log.isDebugEnabled())log.debug("Resuming client writes");
+											if(isDebug)log.debug("Resuming client writes");
 											channel.getSinkChannel().resumeWrites();
 											return;
-										}else {
-											readBuff.clear();
-											if(log.isDebugEnabled())log.debug("Resuming client reads");
-											c.resumeReads();
 										}
 									}
 								} catch (IOException e) {
@@ -366,11 +361,7 @@ public final class Layer7RouterFrontend extends Common {
 								}
 							}
 						});
-						channel.setCloseListener(c->{
-							
-						});
 						if(!routerOptions.regulate) {
-							channel.getSourceChannel().resumeReads();
 							channel.getSinkChannel().resumeWrites();
 						}
 					}}, new ChannelListener<BoundChannel>() {
