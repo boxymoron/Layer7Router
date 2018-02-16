@@ -253,9 +253,6 @@ public final class Layer7RouterFrontend extends Common {
 									if(routerOptions.flush) {
 										flushed = c.flush();
 									}
-									if(count != remaining) {
-										throw new RuntimeException("hmm");
-									}
 									buff.position(pos + count);
 									if(isDebug)log.debug("Wrote "+count+" bytes. (flushed: "+flushed+")"+buff);
 									if(buff.remaining() == 0) {
