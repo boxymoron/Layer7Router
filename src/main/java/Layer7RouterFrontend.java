@@ -257,8 +257,8 @@ public final class Layer7RouterFrontend extends Common {
 										if(isDebug)log.debug("Finished sending request. Resuming Reads.");
 										channel.getSourceChannel().resumeReads();
 									}else {
+										buff.clear();
 										writesRemaining = true;
-										//c.resumeWrites();
 									}
 									globalClientWriteBytes.addAndGet(count);
 									globalClientWriteReq.incrementAndGet();
