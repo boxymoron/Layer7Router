@@ -228,6 +228,11 @@ public final class Layer7RouterFrontend extends Common {
 								if(isInfo)MDC.put("channel", streamConnection.hashCode());
 								try {
 									if(!writesRemaining) {
+										buff.clear();
+										if(isDebug) {
+											log.debug("Putting into buff: "+buff);
+											log.debug(new String(req_arr));
+										}
 										buff.put(req_arr);
 										buff.flip();
 										if(isDebug) {
@@ -240,6 +245,9 @@ public final class Layer7RouterFrontend extends Common {
 
 									final int remaining = buff.remaining();
 									final int pos = buff.position();
+									if(isDebug) {
+										log.debug("Writing buff: "+buff);
+									}
 									final int count = c.write(buff);
 									boolean flushed = false;
 									if(routerOptions.flush) {
@@ -252,12 +260,10 @@ public final class Layer7RouterFrontend extends Common {
 									if(isDebug)log.debug("Wrote "+count+" bytes. (flushed: "+flushed+")"+buff);
 									if(buff.remaining() == 0) {
 										c.suspendWrites();
-										buff.clear();
 										writesRemaining = false;
 										if(isDebug)log.debug("Finished sending request. Resuming Reads.");
 										channel.getSourceChannel().resumeReads();
 									}else {
-										buff.clear();
 										writesRemaining = true;
 									}
 									globalClientWriteBytes.addAndGet(count);
