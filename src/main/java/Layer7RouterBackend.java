@@ -6,6 +6,7 @@ import java.lang.management.MemoryMXBean;
 import java.lang.management.ThreadMXBean;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channel;
 import java.util.Deque;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -100,7 +101,7 @@ public final class Layer7RouterBackend extends Common {
 
 		if(isInfo)log.info("Listening on " + server.getLocalAddress());
 		
-		setupConnectionReaper(readListeners);
+		//setupConnectionReaper(readListeners);
 		
 		printStatistics();
 	}
@@ -183,6 +184,7 @@ public final class Layer7RouterBackend extends Common {
 
 	private static ChannelListener<AcceptingChannel<StreamConnection>> getAcceptListener(final Deque<FrontendReadListener> readListeners) {
 		final ChannelListener<AcceptingChannel<StreamConnection>> acceptListener2 = new ChannelListener<AcceptingChannel<StreamConnection>>() {
+			@SuppressWarnings("unchecked")
 			@Override
 			public final void handleEvent(AcceptingChannel<StreamConnection> channel) {
 				try {
@@ -192,24 +194,19 @@ public final class Layer7RouterBackend extends Common {
 						totalAccepted.incrementAndGet();
 						final FrontendReadListener readListener = new FrontendReadListener();
 						accepted.getSourceChannel().setReadListener(readListener);
-						accepted.getSourceChannel().setCloseListener((c)->{
-							log.error("Source Channel closed: ");
-							readListener.closeAll();
-						});
+						accepted.getSourceChannel().setCloseListener(readListener.closeListener);
 						readListener.streamConnection = accepted;
 						sessionsCount.incrementAndGet();
 						
 						final FrontendWriteListener writeListener = new FrontendWriteListener(readListener);
 						accepted.getSinkChannel().setWriteListener(writeListener);
-						accepted.getSinkChannel().setCloseListener((c)->{
-							log.error("Sink Channel closed: ");
-							readListener.closeAll();
-						});
+						accepted.getSinkChannel().setCloseListener(readListener.closeListener);
 						readListener.writeListener = writeListener;
 
 						accepted.getSourceChannel().resumeReads();
 						//accepted.getSinkChannel().resumeWrites();
-						readListeners.push(readListener);
+
+						//readListeners.push(readListener);
 					}
 				} catch (IOException e) {
 					log.error("", e);
@@ -236,6 +233,14 @@ public final class Layer7RouterBackend extends Common {
 		private FrontendWriteListener writeListener;
 		private long totalWritesToFrontend=0;
 		private long totalReadsFromFrontend=0;
+		
+		@SuppressWarnings("rawtypes")
+		private ChannelListener closeListener = new ChannelListener() {
+			@Override
+			public void handleEvent(Channel channel) {
+				closeAll();
+			}
+		};
 
 		private FrontendReadListener(){
 			buffer.clear();
