@@ -237,7 +237,13 @@ public final class Layer7RouterBackend extends Common {
 		private ChannelListener closeListener = new ChannelListener() {
 			@Override
 			public void handleEvent(Channel channel) {
-				closeAll();
+				if(!allClosed) {
+					final ByteBuffer buff = buffer;
+					buffer = null;
+					writeListener.buffer = null;
+					CustomByteBufferPool.free(buff);
+					allClosed = true;
+				}
 			}
 		};
 
