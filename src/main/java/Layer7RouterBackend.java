@@ -6,7 +6,6 @@ import java.lang.management.MemoryMXBean;
 import java.lang.management.ThreadMXBean;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.nio.channels.Channel;
 import java.util.Deque;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -184,7 +183,6 @@ public final class Layer7RouterBackend extends Common {
 
 	private static ChannelListener<AcceptingChannel<StreamConnection>> getAcceptListener(final Deque<FrontendReadListener> readListeners) {
 		final ChannelListener<AcceptingChannel<StreamConnection>> acceptListener2 = new ChannelListener<AcceptingChannel<StreamConnection>>() {
-			@SuppressWarnings("unchecked")
 			@Override
 			public final void handleEvent(AcceptingChannel<StreamConnection> channel) {
 				try {
@@ -194,13 +192,13 @@ public final class Layer7RouterBackend extends Common {
 						totalAccepted.incrementAndGet();
 						final FrontendReadListener readListener = new FrontendReadListener();
 						accepted.getSourceChannel().setReadListener(readListener);
-						accepted.getSourceChannel().setCloseListener(readListener.closeListener);
+						accepted.getSourceChannel().setCloseListener(readListener);
 						readListener.streamConnection = accepted;
 						sessionsCount.incrementAndGet();
 						
 						final FrontendWriteListener writeListener = new FrontendWriteListener(readListener);
 						accepted.getSinkChannel().setWriteListener(writeListener);
-						accepted.getSinkChannel().setCloseListener(readListener.closeListener);
+						accepted.getSinkChannel().setCloseListener(writeListener);
 						readListener.writeListener = writeListener;
 
 						accepted.getSourceChannel().resumeReads();
@@ -232,20 +230,6 @@ public final class Layer7RouterBackend extends Common {
 		private FrontendWriteListener writeListener;
 		private long totalWritesToFrontend=0;
 		private long totalReadsFromFrontend=0;
-		
-		@SuppressWarnings("rawtypes")
-		private ChannelListener closeListener = new ChannelListener() {
-			@Override
-			public void handleEvent(Channel channel) {
-				if(!allClosed) {
-					allClosed = true;
-					final ByteBuffer buff = buffer;
-					buffer = null;
-					writeListener.buffer = null;
-					CustomByteBufferPool.free(buff);
-				}
-			}
-		};
 
 		private FrontendReadListener(){
 			buffer.clear();
@@ -255,7 +239,11 @@ public final class Layer7RouterBackend extends Common {
 		public final void handleEvent(final ConduitStreamSourceChannel frontendChannel) {
 			//frontendChannel.suspendReads();
 			if(isDebug)MDC.put("channel", streamConnection.hashCode());
-			if(allClosed) {
+			if(!streamConnection.isOpen()){
+				if(isDebug)log.debug("Connection is closed.");
+				closeAll();
+				return;
+			}else if(allClosed) {
 				return;
 			}
 			
@@ -330,7 +318,9 @@ public final class Layer7RouterBackend extends Common {
 			sessionsCount.decrementAndGet();
 			if(isDebug)log.debug("Closing all resources.");
 			try{
-				streamConnection.close();
+				if(streamConnection.isOpen()) {
+					streamConnection.close();
+				}
 			}catch(IOException e1){
 				log.error("", e1);
 			}finally{
@@ -380,6 +370,12 @@ public final class Layer7RouterBackend extends Common {
 			}
 			
 			if(isInfo)MDC.put("channel", streamConnection.hashCode());
+			
+			if(!streamConnection.isOpen()){
+				if(isDebug)log.debug("Connection is closed.");
+				readListener.closeAll();
+				return;
+			}
 			
 			//channel.suspendWrites();
 			
