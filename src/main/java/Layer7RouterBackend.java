@@ -192,13 +192,19 @@ public final class Layer7RouterBackend extends Common {
 						totalAccepted.incrementAndGet();
 						final FrontendReadListener readListener = new FrontendReadListener();
 						accepted.getSourceChannel().setReadListener(readListener);
-						accepted.getSourceChannel().setCloseListener(readListener);
+						accepted.getSourceChannel().setCloseListener((c)->{
+							log.error("Source Channel closed: ");
+							readListener.closeAll();
+						});
 						readListener.streamConnection = accepted;
 						sessionsCount.incrementAndGet();
 						
 						final FrontendWriteListener writeListener = new FrontendWriteListener(readListener);
 						accepted.getSinkChannel().setWriteListener(writeListener);
-						accepted.getSinkChannel().setCloseListener(writeListener);
+						accepted.getSinkChannel().setCloseListener((c)->{
+							log.error("Sink Channel closed: ");
+							readListener.closeAll();
+						});
 						readListener.writeListener = writeListener;
 
 						accepted.getSourceChannel().resumeReads();
@@ -239,11 +245,7 @@ public final class Layer7RouterBackend extends Common {
 		public final void handleEvent(final ConduitStreamSourceChannel frontendChannel) {
 			//frontendChannel.suspendReads();
 			if(isDebug)MDC.put("channel", streamConnection.hashCode());
-			if(!streamConnection.isOpen()){
-				if(isDebug)log.debug("Connection is closed.");
-				closeAll();
-				return;
-			}else if(allClosed) {
+			if(allClosed) {
 				return;
 			}
 			
@@ -368,12 +370,6 @@ public final class Layer7RouterBackend extends Common {
 			}
 			
 			if(isInfo)MDC.put("channel", streamConnection.hashCode());
-			
-			if(!streamConnection.isOpen()){
-				if(isDebug)log.debug("Connection is closed.");
-				readListener.closeAll();
-				return;
-			}
 			
 			//channel.suspendWrites();
 			
