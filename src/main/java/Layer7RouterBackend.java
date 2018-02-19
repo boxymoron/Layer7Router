@@ -101,7 +101,7 @@ public final class Layer7RouterBackend extends Common {
 
 		if(isInfo)log.info("Listening on " + server.getLocalAddress());
 		
-		//setupConnectionReaper(readListeners);
+		setupConnectionReaper(readListeners);
 		
 		printStatistics();
 	}
@@ -205,8 +205,7 @@ public final class Layer7RouterBackend extends Common {
 
 						accepted.getSourceChannel().resumeReads();
 						//accepted.getSinkChannel().resumeWrites();
-
-						//readListeners.push(readListener);
+						readListeners.push(readListener);
 					}
 				} catch (IOException e) {
 					log.error("", e);
