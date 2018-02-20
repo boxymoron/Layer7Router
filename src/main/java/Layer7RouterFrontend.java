@@ -198,10 +198,8 @@ public final class Layer7RouterFrontend extends Common {
 				final InetSocketAddress clientAddr = new InetSocketAddress(routerOptions.client_base_ip+"."+ip, 0);
 				//System.out.println(clientAddr.getAddress().getHostAddress()+":"+clientAddr.getPort()+" Connecting to "+backendAddr);
 				final IoFuture<StreamConnection> future = worker.openStreamConnection(clientAddr, backendAddr, new ChannelListener<StreamConnection> () {
-					StreamConnection streamConnection;
 					@Override
 					public void handleEvent(StreamConnection channel) {
-						this.streamConnection = channel;
 						connections.incrementAndGet();
 						totalAccepted.incrementAndGet();
 						sessionsCount.incrementAndGet();
@@ -217,7 +215,7 @@ public final class Layer7RouterFrontend extends Common {
 								if(!channel.isOpen() || !c.isOpen()) {
 									if(isDebug)log.debug("Connection is closed.");
 									try {
-										streamConnection.close();
+										channel.close();
 									} catch (IOException e) {
 										if(!routerOptions.disableStacktraces) {
 											e.printStackTrace();
@@ -225,7 +223,7 @@ public final class Layer7RouterFrontend extends Common {
 									}
 									return;
 								}
-								if(isInfo)MDC.put("channel", streamConnection.hashCode());
+								if(isInfo)MDC.put("channel", channel.hashCode());
 								try {
 									if(!writesRemaining) {
 										buff.clear();
@@ -300,7 +298,7 @@ public final class Layer7RouterFrontend extends Common {
 									}
 									return;
 								}
-								if(isInfo)MDC.put("channel", streamConnection.hashCode());
+								if(isInfo)MDC.put("channel", channel.hashCode());
 								try {
 									int count = c.read(readBuff);
 									readBuff.flip();

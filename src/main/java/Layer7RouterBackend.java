@@ -386,9 +386,9 @@ public final class Layer7RouterBackend extends Common {
 				} else {
 					buffer.clear();
 				}
-				int remaining = buffer.position();
 				final int remainingToWrite = req.remainingWrites();
-				if(remainingToWrite > 0) {
+				if(req.isKeepAlive() && remainingToWrite > 0) {
+					final int remaining = buffer.position();
 					final int capacity = buffer.capacity();
 					final int toWrite = Math.min(remainingToWrite, capacity);
 					if(toWrite == 1024 && buffer.remaining() == 1024) {
@@ -399,9 +399,7 @@ public final class Layer7RouterBackend extends Common {
 						}
 					}
 					buffer.flip();
-					remaining = remainingToWrite - (Math.min(remainingToWrite, capacity) - remaining);
 				}
-				
 				try{
 					int count = channel.write(buffer);
 					boolean flushed = false;
@@ -468,10 +466,9 @@ public final class Layer7RouterBackend extends Common {
 					ok_header = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 5\r\n\r\nHello";
 				}
 				buffer.put(ok_header.getBytes());
+				buffer.flip();
 				if(isDebug)log.debug("Put "+ok_header.length()+" header bytes into buffer");
-				if(!req.isKeepAlive()) {
-					readListener.closeAll();
-				}
+				req.setWriteHeader(false);
 			}
 			readListener.streamConnection.getSourceChannel().resumeReads();
 		}
