@@ -239,11 +239,11 @@ public final class Layer7RouterBackend extends Common {
 		public final void handleEvent(final ConduitStreamSourceChannel frontendChannel) {
 			//frontendChannel.suspendReads();
 			if(isDebug)MDC.put("channel", streamConnection.hashCode());
-			if(!streamConnection.isOpen()){
+			if(allClosed) {
+				return;
+			}else if(!streamConnection.isOpen()){
 				if(isDebug)log.debug("Connection is closed.");
 				closeAll();
-				return;
-			}else if(allClosed) {
 				return;
 			}
 			
@@ -251,12 +251,12 @@ public final class Layer7RouterBackend extends Common {
 				try{
 					buffer.clear();
 					final int clientReadBytes = frontendChannel.read(buffer);
-					buffer.flip();
 					if(clientReadBytes == -1){
 						if(isDebug)log.debug("Client End of stream.");
 						closeAll();
 						return;
 					}
+					buffer.flip();
 					if(isDebug)log.debug("Read "+clientReadBytes+" bytes from frontend (source)");
 					globalClientReadBytes.addAndGet(clientReadBytes);
 					totalReadsFromFrontend += clientReadBytes;
@@ -318,9 +318,7 @@ public final class Layer7RouterBackend extends Common {
 			sessionsCount.decrementAndGet();
 			if(isDebug)log.debug("Closing all resources.");
 			try{
-				if(streamConnection.isOpen()) {
-					streamConnection.close();
-				}
+				streamConnection.close();
 			}catch(IOException e1){
 				log.error("", e1);
 			}finally{
