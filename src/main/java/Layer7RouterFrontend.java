@@ -210,6 +210,9 @@ public final class Layer7RouterFrontend extends Common {
 						channel.getSinkChannel().setWriteListener(new ChannelListener<ConduitStreamSinkChannel>(){
 							final ByteBuffer buff = ByteBuffer.allocateDirect(req_arr.length);
 							volatile boolean writesRemaining = false;
+							{
+								buff.put(req_arr);
+							}
 							@Override
 							public void handleEvent(ConduitStreamSinkChannel c) {
 								if(!channel.isOpen() || !c.isOpen()) {
@@ -231,8 +234,7 @@ public final class Layer7RouterFrontend extends Common {
 											log.debug("Putting into buff: "+buff);
 											log.debug(new String(req_arr));
 										}
-										buff.put(req_arr);
-										buff.flip();
+										buff.rewind();
 										if(isDebug) {
 											final String header = StandardCharsets.UTF_8.decode(buff).toString();
 											buff.rewind();
