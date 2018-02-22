@@ -211,12 +211,15 @@ public final class Layer7RouterFrontend extends Common {
 						channel.getSinkChannel().setWriteListener(new ChannelListener<ConduitStreamSinkChannel>(){
 							final ByteBuffer buff = ByteBuffer.allocateDirect(req_arr.length);
 							volatile boolean writesRemaining = false;
-							
+							volatile boolean doneWriting = false;
 							{
 								buff.put(req_arr);
 							}
 							@Override
 							public void handleEvent(ConduitStreamSinkChannel c) {
+								if(doneWriting) {
+									return;
+								}
 								if(!channel.isOpen() || !c.isOpen()) {
 									if(isDebug)log.debug("Connection is closed.");
 									try {
@@ -231,6 +234,12 @@ public final class Layer7RouterFrontend extends Common {
 								if(isInfo)MDC.put("channel", channel.hashCode());
 								try {
 									if(done) {
+										return;
+									}
+									if(!routerOptions.keepalive) {
+										doneWriting = true;
+										c.flush();
+										c.close();
 										return;
 									}
 									if(!writesRemaining) {
@@ -313,6 +322,7 @@ public final class Layer7RouterFrontend extends Common {
 									int count = c.read(readBuff);
 									readBuff.flip();
 									if(count == -1) {
+										System.out.println("count == -1");
 										done = true;
 										channel.close();
 										CustomByteBufferPool.free(readBuff);
