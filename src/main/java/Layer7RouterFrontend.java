@@ -198,6 +198,7 @@ public final class Layer7RouterFrontend extends Common {
 				final InetSocketAddress clientAddr = new InetSocketAddress(routerOptions.client_base_ip+"."+ip, 0);
 				//System.out.println(clientAddr.getAddress().getHostAddress()+":"+clientAddr.getPort()+" Connecting to "+backendAddr);
 				final IoFuture<StreamConnection> future = worker.openStreamConnection(clientAddr, backendAddr, new ChannelListener<StreamConnection> () {
+					volatile boolean done = false;
 					@Override
 					public void handleEvent(StreamConnection channel) {
 						connections.incrementAndGet();
@@ -210,6 +211,7 @@ public final class Layer7RouterFrontend extends Common {
 						channel.getSinkChannel().setWriteListener(new ChannelListener<ConduitStreamSinkChannel>(){
 							final ByteBuffer buff = ByteBuffer.allocateDirect(req_arr.length);
 							volatile boolean writesRemaining = false;
+							
 							{
 								buff.put(req_arr);
 							}
@@ -228,6 +230,9 @@ public final class Layer7RouterFrontend extends Common {
 								}
 								if(isInfo)MDC.put("channel", channel.hashCode());
 								try {
+									if(done) {
+										return;
+									}
 									if(!writesRemaining) {
 										buff.clear();
 										if(isDebug) {
@@ -290,6 +295,9 @@ public final class Layer7RouterFrontend extends Common {
 							}
 							@Override
 							public void handleEvent(ConduitStreamSourceChannel c) {
+								if(done) {
+									return;
+								}
 								if(!channel.isOpen() || !c.isOpen()) {
 									try {
 										channel.close();
@@ -305,6 +313,7 @@ public final class Layer7RouterFrontend extends Common {
 									int count = c.read(readBuff);
 									readBuff.flip();
 									if(count == -1) {
+										done = true;
 										channel.close();
 										CustomByteBufferPool.free(readBuff);
 										return;
