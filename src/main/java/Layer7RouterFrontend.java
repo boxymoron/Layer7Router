@@ -217,7 +217,7 @@ public final class Layer7RouterFrontend extends Common {
 							}
 							@Override
 							public void handleEvent(ConduitStreamSinkChannel c) {
-								if(doneWriting) {
+								if(done || doneWriting) {
 									return;
 								}
 								if(!channel.isOpen() || !c.isOpen()) {
@@ -233,16 +233,13 @@ public final class Layer7RouterFrontend extends Common {
 								}
 								if(isInfo)MDC.put("channel", channel.hashCode());
 								try {
-									if(done) {
-										return;
-									}
-									if(!routerOptions.keepalive) {
-										doneWriting = true;
-										c.flush();
-										c.close();
-										return;
-									}
 									if(!writesRemaining) {
+										if(!routerOptions.keepalive) {
+											doneWriting = true;
+											c.flush();
+											c.close();
+											return;
+										}
 										buff.clear();
 										if(isDebug) {
 											log.debug("Putting into buff: "+buff);
