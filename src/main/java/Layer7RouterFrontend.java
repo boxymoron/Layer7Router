@@ -234,12 +234,6 @@ public final class Layer7RouterFrontend extends Common {
 								if(isInfo)MDC.put("channel", channel.hashCode());
 								try {
 									if(!writesRemaining) {
-										if(!routerOptions.keepalive) {
-											doneWriting = true;
-											c.flush();
-											c.close();
-											return;
-										}
 										buff.clear();
 										if(isDebug) {
 											log.debug("Putting into buff: "+buff);
@@ -270,6 +264,11 @@ public final class Layer7RouterFrontend extends Common {
 										c.suspendWrites();
 										writesRemaining = false;
 										if(isDebug)log.debug("Finished sending request. Resuming Reads.");
+										if(!routerOptions.keepalive) {
+											doneWriting = true;
+											c.flush();
+											c.close();
+										}
 										channel.getSourceChannel().resumeReads();
 									}else {
 										writesRemaining = true;
