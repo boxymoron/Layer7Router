@@ -1,4 +1,3 @@
-
 import java.io.IOException;
 import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ManagementFactory;
@@ -37,24 +36,26 @@ import com.boxymoron.request.Request8;
  *
  */
 public final class Layer7RouterBackend extends Common {
-	
+
 	final static Logger log = Logger.getLogger(Layer7RouterBackend.class);
-	
+
 	final static boolean isInfo=log.isInfoEnabled();
 	final static boolean isDebug=log.isDebugEnabled();
 	final static boolean isTrace=log.isTraceEnabled();
 
 	final static AtomicInteger totalAccepted = new AtomicInteger();
 	final static AtomicInteger sessionsCount = new AtomicInteger();
-	final static AtomicLong globalClientWriteBytes = new AtomicLong();
+	final static AtomicLong globalClientReads = new AtomicLong();
 	final static AtomicLong globalClientReadBytes = new AtomicLong();
+	final static AtomicLong globalClientWrites = new AtomicLong();
+	final static AtomicLong globalClientWriteBytes = new AtomicLong();
 
 	final static Xnio xnio = Xnio.getInstance();
 	static XnioWorker worker;
 	static OptionMap xnioOptions;
 	//static ByteBufferSlicePool pool = new ByteBufferSlicePool(1024*8, 32*1024*1024*32);
 	static ByteBufferPool pool;
-	
+
 	private final static byte[] bytes_1024 = ("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
 											"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
 											"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
@@ -63,7 +64,7 @@ public final class Layer7RouterBackend extends Common {
 											"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
 											"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
 											"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").getBytes();
-	
+
 	final static Options routerOptions = new Options();
 
 	public static void main(String[] args) throws Exception {
@@ -99,9 +100,9 @@ public final class Layer7RouterBackend extends Common {
 		server.resumeAccepts();
 
 		if(isInfo)log.info("Listening on " + server.getLocalAddress());
-		
+
 		setupConnectionReaper(readListeners);
-		
+
 		printStatistics();
 	}
 
@@ -111,10 +112,12 @@ public final class Layer7RouterBackend extends Common {
 		final BufferPoolMXBean bufferPoolBean = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream().filter(bb->"direct".equals(bb.getName())).findFirst().get();
 		final MemoryMXBean mmxb = ManagementFactory.getMemoryMXBean();
 		final ThreadMXBean tmxb = getWorkerCpuTimes(workerCpuTimes);
-		
+
 		int acceptedLast = totalAccepted.get();
 		long clientToBackendLast = globalClientReadBytes.get();
+		long clientToBackendReadsLast = globalClientReads.get();
 		long backendToClientLast = globalClientWriteBytes.get();
+		long backendToClientWritesLast = globalClientWrites.get();
 		long start = System.currentTimeMillis();
 		String lastFormatted="";
 		while(true){
@@ -123,8 +126,11 @@ public final class Layer7RouterBackend extends Common {
 
 			final StringBuilder cpuStats = getCpuStats(tmxb, workerCpuTimes, ((double)slept)/1000d);
 			final StringBuilder memoryStats = getMemoryStats(runtime, mmxb);
-			
+
 			double acceptedPerSec = ((double)totalAccepted.get() - (double)acceptedLast) / ((double)slept/1000d);
+			double requestsPerSec = ((double)globalClientReads.get() - (double)clientToBackendReadsLast) / ((double)slept/1000d);
+			double responsesPerSec = ((double)globalClientWrites.get() - (double)backendToClientWritesLast) / ((double)slept/1000d);
+			
 			double backendToClientPerSec = (globalClientWriteBytes.get() - backendToClientLast) / ((double)slept/1000d);
 			String backendToClientPerSecUnits = "KB";
 			if(backendToClientPerSec > ((1024*1024)-1)) {
@@ -133,7 +139,7 @@ public final class Layer7RouterBackend extends Common {
 			}else {
 				backendToClientPerSec = backendToClientPerSec / 1024f;
 			}
-			
+
 			double clientToBackendPerSec = (globalClientReadBytes.get() - clientToBackendLast) / ((double)slept/1000d);
 			String clientToBackendPerSecUnits = "KB";
 			if(clientToBackendPerSec > ((1024*1024)-1)) {
@@ -142,9 +148,9 @@ public final class Layer7RouterBackend extends Common {
 			}else {
 				clientToBackendPerSec = clientToBackendPerSec / 1024f;
 			}
-			
-			final String formatted = String.format("Sess: %,.1f per/sec, %,d total, %,d curr, %,d FR, %,d FW, in %,.1f %s/sec, out %,.1f %s/sec, Direct %,.1f MB, %s, %s", 
-					acceptedPerSec, totalAccepted.get(), sessionsCount.get(), globalClientReadBytes.get(), globalClientWriteBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f), memoryStats, cpuStats);
+
+			final String formatted = String.format("Sess: %,.1f per/sec, %,.0f req/sec, %,.0f resp/sec, %,d total, %,d curr, %,d FR, %,d FW, in %,.1f %s/sec, out %,.1f %s/sec, Direct %,.1f MB, %s, %s",
+					acceptedPerSec, requestsPerSec, responsesPerSec, totalAccepted.get(), sessionsCount.get(), globalClientReadBytes.get(), globalClientWriteBytes.get(), clientToBackendPerSec, clientToBackendPerSecUnits, backendToClientPerSec, backendToClientPerSecUnits, ((float)bufferPoolBean.getMemoryUsed())/(1024f*1024f), memoryStats, cpuStats);
 			if(!formatted.equals(lastFormatted)){
 				System.out.println(formatted);
 			}
@@ -152,6 +158,8 @@ public final class Layer7RouterBackend extends Common {
 			acceptedLast = totalAccepted.get();
 			clientToBackendLast = globalClientReadBytes.get();
 			backendToClientLast = globalClientWriteBytes.get();
+			clientToBackendReadsLast = globalClientReads.get();
+			backendToClientWritesLast = globalClientWrites.get();
 			start = System.currentTimeMillis();
 		}
 	}
@@ -195,7 +203,7 @@ public final class Layer7RouterBackend extends Common {
 						accepted.getSourceChannel().setCloseListener(readListener);
 						readListener.streamConnection = accepted;
 						sessionsCount.incrementAndGet();
-						
+
 						final FrontendWriteListener writeListener = new FrontendWriteListener(readListener);
 						accepted.getSinkChannel().setWriteListener(writeListener);
 						accepted.getSinkChannel().setCloseListener(writeListener);
@@ -221,9 +229,9 @@ public final class Layer7RouterBackend extends Common {
 
 	private final static class FrontendReadListener implements ChannelListener<ConduitStreamSourceChannel> {
 		private ByteBuffer buffer = pool.allocate();
-		
+
 		private volatile boolean writeHeaders=false;
-		
+
 		private Request8 request=null;
 		private volatile boolean allClosed=false;
 		private StreamConnection streamConnection;
@@ -234,7 +242,7 @@ public final class Layer7RouterBackend extends Common {
 		private FrontendReadListener(){
 			buffer.clear();
 		}
-		
+
 		@Override
 		public final void handleEvent(final ConduitStreamSourceChannel frontendChannel) {
 			//frontendChannel.suspendReads();
@@ -246,7 +254,7 @@ public final class Layer7RouterBackend extends Common {
 				closeAll();
 				return;
 			}
-			
+
 			try {
 				try{
 					buffer.clear();
@@ -260,7 +268,7 @@ public final class Layer7RouterBackend extends Common {
 					if(isDebug)log.debug("Read "+clientReadBytes+" bytes from frontend (source)");
 					globalClientReadBytes.addAndGet(clientReadBytes);
 					totalReadsFromFrontend += clientReadBytes;
-					
+
 					if(request == null) {
 						request = new Request8(buffer);
 						writeListener.req = request;
@@ -269,9 +277,11 @@ public final class Layer7RouterBackend extends Common {
 					}
 
 					if(isDebug)log.debug(request);
-					
+
 					if(!request.isMoreToRead()) {
-						buffer.position(buffer.limit());
+						buffer.clear();
+						globalClientReads.incrementAndGet();
+						//buffer.position(buffer.limit());
 						if(isDebug)log.debug("Resuming Writes");
 						frontendChannel.suspendReads();
 						streamConnection.getSinkChannel().resumeWrites();
@@ -348,49 +358,47 @@ public final class Layer7RouterBackend extends Common {
 			return builder.toString();
 		}
 	}
-	
+
 	private final static class FrontendWriteListener implements ChannelListener<ConduitStreamSinkChannel> {
-		private final FrontendReadListener readListener;		
+		private final FrontendReadListener readListener;
 		private Request8 req;
 		private StreamConnection streamConnection;
 		private ByteBuffer buffer;
-		
+
 		public FrontendWriteListener(FrontendReadListener readListener){
 			this.readListener = readListener;
 			this.streamConnection = readListener.streamConnection;
 			this.buffer = readListener.buffer;
 		}
-		
+
 		@Override
 		public final void handleEvent(final ConduitStreamSinkChannel channel) {
 			if(readListener.allClosed){
 				return;
 			}
-			
+
 			if(isInfo)MDC.put("channel", streamConnection.hashCode());
-			
+
 			if(!streamConnection.isOpen()){
 				if(isDebug)log.debug("Connection is closed.");
 				readListener.closeAll();
 				return;
 			}
-			
+
 			//channel.suspendWrites();
-			
 			try {
+				int headerLength = 0;
 				if(req.isWriteHeader()) {
-					writeOKHeader(channel);
+					headerLength = writeOKHeader(channel);
 					if(readListener.allClosed) {
 						return;
 					}
-				} else {
-					buffer.clear();
 				}
-				final int remainingToWrite = req.remainingWrites();
-				if(req.isKeepAlive() && remainingToWrite > 0) {
+				final int remainingToWrite = req.remainingWrites() + headerLength;
+				if(remainingToWrite > 0 && buffer.position() < buffer.limit()) {
 					final int remaining = buffer.position();
-					final int capacity = buffer.capacity();
-					final int toWrite = Math.min(remainingToWrite, capacity);
+					final int limit = buffer.limit();
+					final int toWrite = Math.min(remainingToWrite, limit);
 					if(toWrite == 1024 && buffer.remaining() == 1024) {
 						buffer.put(bytes_1024);
 					}else {
@@ -401,6 +409,7 @@ public final class Layer7RouterBackend extends Common {
 					buffer.flip();
 				}
 				try{
+					//System.out.println("buffer: "+buffer);
 					int count = channel.write(buffer);
 					boolean flushed = false;
 					if(routerOptions.flush) {
@@ -410,7 +419,7 @@ public final class Layer7RouterBackend extends Common {
 					readListener.totalWritesToFrontend += count;
 					globalClientWriteBytes.addAndGet(count);
 					if(isDebug){
-						log.debug("Wrote "+count+" body bytes from backend to client (flushed: "+flushed+")");
+						log.debug("Wrote "+count+" bytes from backend to client (flushed: "+flushed+")");
 						log.debug(req);
 					}
 					if(!req.isMoreToWrite()){
@@ -445,7 +454,7 @@ public final class Layer7RouterBackend extends Common {
 			}
 		}
 
-		private void writeOKHeader(final ConduitStreamSinkChannel channel) throws IOException {
+		private int writeOKHeader(final ConduitStreamSinkChannel channel) throws IOException {
 			buffer.clear();
 			final int content_length = readListener.request.getContentLength();
 			if(content_length != -1) {
@@ -457,9 +466,11 @@ public final class Layer7RouterBackend extends Common {
 					ok_header = "HTTP/1.1 100 Continue\r\n\r\n";
 				}
 				buffer.put(ok_header.getBytes());
-				req.incrementBodyBytesWritten(-1 * ok_header.length());
+				//req.incrementBodyBytesWritten(-1 * ok_header.length());
 				if(isDebug)log.debug("Put "+ok_header.length()+" header bytes into buffer");
 				req.setWriteHeader(false);
+				globalClientWrites.incrementAndGet();
+				return ok_header.length();
 			}else {
 				String ok_header = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nHello";
 				if(req.isKeepAlive()) {
@@ -469,8 +480,10 @@ public final class Layer7RouterBackend extends Common {
 				buffer.flip();
 				if(isDebug)log.debug("Put "+ok_header.length()+" header bytes into buffer");
 				req.setWriteHeader(false);
+				globalClientWrites.incrementAndGet();
+				return ok_header.length();
 			}
-			readListener.streamConnection.getSourceChannel().resumeReads();
+			//readListener.streamConnection.getSourceChannel().resumeReads();
 		}
 	}
 
